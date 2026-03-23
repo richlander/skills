@@ -8,9 +8,27 @@ Instead, we're pivoting to **scenario-shaped skills** that start from the develo
 
 ## Proposed Skills
 
-Three skills, all under `plugins/dotnet/skills/`, each with its own eval:
+Five skills, all under `plugins/dotnet/skills/`, each with its own eval:
 
-### 1. `dotnet-platform-discovery`
+### 1. `dotnet-api-migration`
+
+**Trigger:** "Upgrade this package" / "This code uses an old API — fix it"
+
+The developer has code that targets an older version of a package or API and needs to migrate to a newer version. The skill teaches the agent to triage what changed first, then fix systematically.
+
+**Tool mix:**
+- `dotnet-inspect diff` — classify breaking vs. additive changes between versions
+- `dotnet-inspect member` — explore the new API surface after identifying changes
+- `dotnet add package` / `dotnet list package` — update PackageReferences
+- Build-test loop — `dotnet build` to verify the migration compiles
+
+**Example prompts:**
+- "Upgrade System.CommandLine from the beta to the latest stable version"
+- "This project uses an old version of Microsoft.Extensions.AI — update it"
+- "What breaking changes happened between these two versions of this package?"
+- "Fix the build errors after upgrading to the latest version"
+
+### 2. `dotnet-platform-discovery`
 
 **Trigger:** "What does .NET give me for X?"
 
@@ -29,7 +47,7 @@ The developer knows the *domain* (caching, health checks, authentication, observ
 - "What authentication handlers ship with ASP.NET Core?"
 - "I'm building an observability layer — find all the ILogger*, Activity*, Meter* types"
 
-### 2. `dotnet-dependency-analysis`
+### 3. `dotnet-dependency-analysis`
 
 **Trigger:** "What does this pull in?" / "Why is this assembly in my output?"
 
@@ -48,7 +66,7 @@ The developer wants to understand the dependency graph — what's transitive, wh
 - "Is System.Text.Json in the shared framework or do I need a PackageReference?"
 - "Show me the dependency chain from my project to this assembly"
 
-### 3. `dotnet-supply-chain-visibility`
+### 4. `dotnet-supply-chain-visibility`
 
 **Trigger:** "What should I know about this package before I depend on it?"
 
@@ -67,6 +85,26 @@ Not a trust verdict — *visibility*. The developer wants to see the facts and m
 - "Who publishes this package? What license?"
 - "How many versions has this had? When was the last release?"
 - "Are there any known vulnerabilities in my current dependencies?"
+
+### 5. `dotnet-source-exploration`
+
+**Trigger:** "Show me the source code" / "Where is this implemented?"
+
+The developer wants to read the actual source of a .NET type or member — either to understand how it works, debug unexpected behavior, or learn from the implementation. The skill teaches the agent to locate and retrieve source via SourceLink.
+
+**Tool mix:**
+- `dotnet-inspect source` — get SourceLink URLs for types and members, with line numbers
+- `dotnet-inspect source --cat` — fetch and print source inline (no browser needed)
+- `--head N` / `--tail N` — limit output for large files
+- `--platform` — locate runtime/ASP.NET Core types (e.g., `source Dictionary --platform System.Collections`)
+- `dotnet-inspect member` — identify the right overload before drilling into source
+
+**Example prompts:**
+- "Show me how JsonSerializer.Serialize is implemented"
+- "Where is HttpClient defined in the .NET runtime?"
+- "I want to see the source for Dictionary's resize logic"
+- "What does AddHttpClient actually do under the hood?"
+- "Show me the source for IHostBuilder in ASP.NET Core"
 
 ## Approach
 
