@@ -97,7 +97,8 @@ public sealed record EvalScenario(
     IReadOnlyList<string>? RejectTools = null,
     int? MaxTurns = null,
     int? MaxTokens = null,
-    bool ExpectActivation = true);
+    bool ExpectActivation = true,
+    string? ExpectedSkill = null);
 
 public sealed record EvalConfig(
     IReadOnlyList<EvalScenario> Scenarios,
@@ -171,6 +172,9 @@ public sealed class RunMetrics
     public int OutputTokens { get; set; }
     public int CacheReadTokens { get; set; }
     public int CacheWriteTokens { get; set; }
+    public int ReasoningTokens { get; set; }
+    public string? ReasoningEffort { get; set; }
+    public double Cost { get; set; }
     public int JudgeInputTokens { get; set; }
     public int JudgeOutputTokens { get; set; }
     public int JudgeCacheReadTokens { get; set; }
@@ -324,6 +328,9 @@ public sealed class ScenarioComparison
     public int? TimeoutSeconds { get; set; }
     /// <summary>When false, non-activation is expected (negative test) and should not flag the verdict.</summary>
     public bool ExpectActivation { get; set; } = true;
+    /// <summary>Methodology prior: the ONE target skill the scenario is designed to exercise (from eval.yaml expected_skill). Null when unset. Compared against the skills actually pulled to report over/under-fire and a target-skill hit rate.</summary>
+    [JsonPropertyName("expectedSkill")]
+    public string? ExpectedSkill { get; set; }
     /// <summary>Number of individual runs that failed with exceptions and were excluded from aggregation.</summary>
     public int FailedRunCount { get; set; }
     /// <summary>Non-null when the entire scenario failed with an execution error (not a timeout).</summary>

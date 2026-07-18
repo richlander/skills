@@ -362,6 +362,8 @@ scenarios:
 
 Constraints are evaluated alongside assertions — a failed constraint means a failed task.
 
+An optional `expected_skill: <skill-name>` records the ONE target skill a scenario is designed to exercise (a diagnostic **prior**, not a gate — it never affects pass/fail). It is echoed to results.json as `expectedSkill`; analysis tools compare it against the skills actually pulled to report over/under-fire and a target-skill hit rate.
+
 ### Rubric
 
 Rubric items are evaluated by an LLM judge that sees both the baseline and skill-enhanced outputs side-by-side (pairwise mode). The judge determines which output is better per criterion and by how much. Position bias is mitigated by running the comparison twice with swapped order and checking consistency.
