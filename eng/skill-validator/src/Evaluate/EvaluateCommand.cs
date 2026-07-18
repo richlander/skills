@@ -821,6 +821,7 @@ public static class EvaluateCommand
         comparison.TimedOut = runResults.Any(r =>
             r.Baseline.Metrics.TimedOut || r.SkilledIsolated.Metrics.TimedOut || r.SkilledPlugin.Metrics.TimedOut);
         comparison.ExpectActivation = scenario.ExpectActivation;
+        comparison.ExpectedSkill = scenario.ExpectedSkill;
         comparison.FailedRunCount = failedRunCount;
 
         return comparison;
@@ -1393,6 +1394,7 @@ public static class EvaluateCommand
         // Propagate timeout and expect_activation from scenario config
         comparison.TimeoutSeconds = scenario.Timeout;
         comparison.ExpectActivation = scenario.ExpectActivation;
+        comparison.ExpectedSkill = scenario.ExpectedSkill;
         comparison.FailedRunCount = failedRunCount;
 
         return comparison;
@@ -1441,6 +1443,7 @@ public static class EvaluateCommand
             Breakdown = new MetricBreakdown(0, 0, 0, 0, 0, 0, 0),
             TimeoutSeconds = scenario.Timeout,
             ExpectActivation = scenario.ExpectActivation,
+            ExpectedSkill = scenario.ExpectedSkill,
         };
 
     private static async Task<RunExecutionResult> ExecuteRun(
@@ -1972,6 +1975,9 @@ public static class EvaluateCommand
             OutputTokens = AvgRound(runs.Select(r => r.Metrics.OutputTokens)),
             CacheReadTokens = AvgRound(runs.Select(r => r.Metrics.CacheReadTokens)),
             CacheWriteTokens = AvgRound(runs.Select(r => r.Metrics.CacheWriteTokens)),
+            ReasoningTokens = AvgRound(runs.Select(r => r.Metrics.ReasoningTokens)),
+            ReasoningEffort = runs.Select(r => r.Metrics.ReasoningEffort).FirstOrDefault(e => !string.IsNullOrEmpty(e)),
+            Cost = runs.Average(r => r.Metrics.Cost),
             JudgeInputTokens = AvgRound(runs.Select(r => r.Metrics.JudgeInputTokens)),
             JudgeOutputTokens = AvgRound(runs.Select(r => r.Metrics.JudgeOutputTokens)),
             JudgeCacheReadTokens = AvgRound(runs.Select(r => r.Metrics.JudgeCacheReadTokens)),

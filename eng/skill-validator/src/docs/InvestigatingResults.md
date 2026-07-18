@@ -70,6 +70,7 @@ Each scenario includes two required runs (baseline + isolated). It may also incl
 | Field | Description |
 |-------|-------------|
 | `scenarioName` | Human-readable scenario name |
+| `expectedSkill` | Methodology prior: the ONE target skill the scenario is designed to exercise (from eval.yaml `expected_skill`). Optional/null when unset. Compare against the skills actually pulled (`skillActivationPlugin.detectedSkills`) to measure over/under-fire and a target-skill hit rate |
 | `baseline` | Run without the skill |
 | `skilledIsolated` | Run with only this skill loaded |
 | `skilledPlugin` | Optional run with the full plugin loaded (may be null when plugin runs are disabled) |
