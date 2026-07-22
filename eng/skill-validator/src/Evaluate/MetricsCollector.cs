@@ -104,6 +104,9 @@ public static class MetricsCollector
         int outputTokens = 0;
         int cacheReadTokens = 0;
         int cacheWriteTokens = 0;
+        int reasoningTokens = 0;
+        string? reasoningEffort = null;
+        double cost = 0;
         bool hasRealTokenCounts = false;
         int toolCallCount = 0;
         var toolCallBreakdown = new Dictionary<string, int>();
@@ -145,6 +148,11 @@ public static class MetricsCollector
                         outputTokens += output;
                         cacheReadTokens += cacheRead;
                         cacheWriteTokens += cacheWrite;
+                        reasoningTokens += GetIntValue(evt.Data, "reasoningTokens");
+                        cost += GetDoubleValue(evt.Data, "cost");
+                        var effort = GetStringValue(evt.Data, "reasoningEffort");
+                        if (!string.IsNullOrEmpty(effort))
+                            reasoningEffort = effort;
                     }
                     break;
                 }
@@ -179,6 +187,9 @@ public static class MetricsCollector
             OutputTokens = outputTokens,
             CacheReadTokens = cacheReadTokens,
             CacheWriteTokens = cacheWriteTokens,
+            ReasoningTokens = reasoningTokens,
+            ReasoningEffort = reasoningEffort,
+            Cost = cost,
             ToolCallCount = toolCallCount,
             ToolCallBreakdown = toolCallBreakdown,
             TurnCount = turnCount,
@@ -196,6 +207,17 @@ public static class MetricsCollector
         if (data.TryGetValue(key, out var value) && value is not null)
             return value.ToString();
         return null;
+    }
+
+    private static double GetDoubleValue(Dictionary<string, JsonNode?> data, string key)
+    {
+        if (data.TryGetValue(key, out var value) && value is not null)
+        {
+            try { return value.GetValue<double>(); } catch { }
+            try { return value.GetValue<long>(); } catch { }
+            if (double.TryParse(value.ToString(), out var parsed)) return parsed;
+        }
+        return 0;
     }
 
     private static int GetIntValue(Dictionary<string, JsonNode?> data, string key)

@@ -63,7 +63,32 @@ Each verdict contains:
 | `skillName` | Name of the skill being evaluated |
 | `passed` | Overall pass/fail |
 | `scenarios[]` | Array of per-scenario comparisons |
+| `evalMode` | Evaluation lens the verdict was graded under: `PerSkill` (default) or `Holistic` (see below) |
+| `isolatedScore` | Mean isolated-arm improvement (per-skill mode); `null` in holistic mode, which does not run the isolated arm |
+| `pluginScore` | Mean plugin-arm improvement |
 | `overfittingResult` | Overfitting analysis (if enabled) |
+
+> **Evaluation modes (`--eval-mode`):** The harness supports two lenses.
+> **`per-skill`** (default) grades a single skill's standalone value on the conservative
+> `min(isolated, plugin)` verdict — the dotnet/skills per-skill-PR paradigm. **`holistic`**
+> grades the whole shelf as the object of study: it skips the isolated arm entirely (saving
+> ~1/3 of each scenario's run cost), lets the agent self-select from the loaded plugin, and
+> reads the verdict from the **plugin arm alone**. Holistic is the lens for CT-24-style
+> whole-shelf benchmarks and for intentional multi-skill tasks that a single-skill isolated
+> arm would false-fail. In holistic results the `skilledIsolated` arm is a zero-filled
+> placeholder (empty output, empty work dir, judge score 0) — do not read it; the `isolated*`
+> fields are present only for schema stability and should be ignored. Both the verdict and
+> each scenario carry `evalMode` so downstream tooling can tell which lens produced the numbers.
+>
+> **Leave-one-out ablation (`--exclude-skill <name>`, repeatable):** Omits the named skill(s)
+> from the plugin arm's shelf (a copy of the shelf is staged minus the excluded dirs; the base
+> `plugin.json` and every other skill are kept). This measures a skill's *marginal* contribution
+> on multi-skill-pull scenarios: `marginal(X) = outcome(full shelf) − outcome(shelf − X)`, the
+> composition-axis LIET step. Pair it with `--eval-mode holistic` and reuse a persisted baseline
+> (`--baseline-from`) so only the plugin arm re-runs. The excluded names are validated against the
+> shelf **before any runs** — a name that matches no skill aborts the command with exit 1 (it does
+> not silently degrade to an empty shelf). Datasets from the grounding wrapper are tagged
+> `<unit>-skill-minus-<X>` so shelf-minus-X sits beside the full-shelf dataset for comparison.
 
 ### Scenario structure
 
@@ -82,9 +107,10 @@ Each scenario includes two required runs (baseline + isolated). It may also incl
 | `isolatedBreakdown` | Per-metric contribution to the score (see below) |
 | `pluginBreakdown` | Per-metric contribution to the score (see below); optional and only populated when a plugin run is present |
 | `pairwiseResult` | Judge's rubric-by-rubric comparison |
-| `perRunScores` | Per-run improvement scores as a flat array of numbers (one per run); when a plugin run is present, each value is `min(isolated, plugin)` for that run; when no plugin run is present (`skilledPlugin` is null), each value is the isolated improvement score for that run |
+| `perRunScores` | Per-run improvement scores as a flat array of numbers (one per run); when a plugin run is present, each value is `min(isolated, plugin)` for that run; when no plugin run is present (`skilledPlugin` is null), each value is the isolated improvement score for that run. **In holistic mode** each value is the plugin-arm score alone (the isolated arm is skipped, so nothing is min'd against it) |
+| `evalMode` | The lens this scenario was graded under: `PerSkill` or `Holistic`. In `Holistic`, `improvementScore` and `perRunScores` read the plugin arm alone |
 
-> **Note:** Scenarios do not have a `passed` field. To determine pass/fail for an individual scenario, check whether `improvementScore >= 0`. This is the effective score: when no plugin run is present it equals `isolatedImprovementScore`; when a plugin run is present it is the min of isolated and plugin scores. The `passed` field exists only at the verdict level (per-skill).
+> **Note:** Scenarios do not have a `passed` field. To determine pass/fail for an individual scenario, check whether `improvementScore >= 0`. This is the effective score: in per-skill mode it equals `isolatedImprovementScore` when no plugin run is present, else the min of isolated and plugin scores; in holistic mode it equals `pluginImprovementScore` (the isolated arm is a placeholder). The `passed` field exists only at the verdict level (per-skill).
 
 > **Reused baselines:** When the run was invoked with `--baseline-from`, the `baseline` arm is not executed — its `metrics` and `judgeResult` come from the shared baseline file produced earlier with `--baseline-out` (computed once, honoring `--runs`). Such scenarios are reported with the `baseline-reused` session phase and a `reused` baseline status. The baseline file is keyed on `--model` and `--judge-model` plus, per scenario, a SHA-256 of the prompt and a composite SHA-256 over its setup inputs (copied test files, explicit setup files, and setup commands) and its evaluation criteria (rubric, assertions, expect/reject tools, and turn/token/timeout limits); reuse fails fast if the agent model, judge model, or any prompt-plus-setup-plus-criteria identity is missing, so the baseline you compare against is always identity-matched and a shared prompt across cases with different fixtures or rubrics cannot cross-contaminate. Because the baseline output is identical across every skill/agent that consumes the same file, this acts as a shared control group and removes baseline run-to-run variance from cross-skill comparisons.
 
