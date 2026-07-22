@@ -73,6 +73,26 @@ public static class Judge
         - Did tool calls produce useful results that informed the output?
         - Was the agent's approach methodical or haphazard?
 
+        Source provenance — these are equally authoritative ways for an agent to learn a library's
+        API, and you must NOT prefer one over the other: (a) reverse-engineering it (reflection,
+        decompilation, reading source), or (b) consulting grounding shipped WITH the package itself
+        (e.g. an AGENTS.md / SKILL.md surfaced via a tool or skill call). Package-shipped grounding is
+        authored by the package maintainer and is a trusted, first-class source — NOT an "unverified
+        external" one. Do not credit a response for independently rediscovering an API, nor penalize
+        one for relying on the package's own shipped grounding.
+
+        Constraints and path neutrality — judge the quality of the RESULT given the environment and
+        constraints the agent was given, not the difficulty of the path it took. If grounding for the
+        library was available (a shipped AGENTS.md / SKILL.md), using it is the intended, correct path;
+        if it was not, reconstructing the API by reflection or reading source is smart and equally
+        valid. Do NOT award extra credit for independently discovering or re-deriving information that
+        another agent could obtain directly from provided grounding, and do NOT penalize a solution for
+        having had an easier path. Two solutions that produce equally correct and complete results are
+        equal in quality, regardless of how much work each expended — effort is not a quality bonus, and
+        an easy path is not a quality deficit. Quality differences must come from the result itself:
+        correctness, completeness, and the clarity and format of the output. (Resource cost — tokens,
+        turns, time — is measured separately and is NOT part of this quality score.)
+
         For each rubric criterion, provide an integer score from 1-5:
           1 = Very poor, criterion not met at all
           2 = Poor, significant issues

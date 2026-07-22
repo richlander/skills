@@ -36,6 +36,9 @@ public static class EvaluateCommand
         var baselineOutOpt = new Option<string?>("--baseline-out") { Description = "After running, persist each scenario's averaged baseline (no-skill/no-agent reference) to this file for later reuse with --baseline-from." };
         var baselineFromOpt = new Option<string?>("--baseline-from") { Description = "Reuse a precomputed baseline from this file instead of re-running the no-skill/no-agent baseline arm. Must match --model, --judge-model, and each scenario's prompt, setup inputs, and evaluation criteria. Mutually exclusive with --baseline-out." };
         var noJudgeOpt = new Option<bool>("--no-judge") { Description = "Run the agent arms and persist sessions/metrics but skip all judging. Judging can be deferred to a later 'rejudge' step (optionally cross-directory). Implies session persistence and requires no baseline." };
+        var evalModeOpt = new Option<string>("--eval-mode") { Description = "Evaluation lens: 'per-skill' (baseline vs skilled-isolated vs skilled-plugin, graded on min(isolated, plugin) — one skill's standalone value) or 'holistic' (baseline vs skilled-plugin only; the agent self-selects from the shelf and the verdict reads the plugin arm — the whole-shelf benchmark). Holistic skips the isolated arm (~1/3 of run cost) and lets intentional multi-skill tasks pass.", DefaultValueFactory = _ => "per-skill" };
+        evalModeOpt.AcceptOnlyFromAmong("per-skill", "holistic");
+        var excludeSkillOpt = new Option<string[]>("--exclude-skill") { Description = "Leave-one-out ablation: omit the named skill from the plugin (skilled-plugin) arm's shelf. Repeatable. Used to measure a skill's marginal contribution — full shelf minus X — on multi-skill-pull scenarios. Errors if a named skill is not on the shelf.", AllowMultipleArgumentsPerToken = true };
 
         var command = new Command("evaluate", "Evaluate agent skills via LLM-based testing")
         {
@@ -65,6 +68,8 @@ public static class EvaluateCommand
             baselineOutOpt,
             baselineFromOpt,
             noJudgeOpt,
+            evalModeOpt,
+            excludeSkillOpt,
         };
 
         command.Add(RejudgeCommand.Create());
@@ -119,6 +124,8 @@ public static class EvaluateCommand
                 BaselineOut = parseResult.GetValue(baselineOutOpt),
                 BaselineFrom = parseResult.GetValue(baselineFromOpt),
                 NoJudge = parseResult.GetValue(noJudgeOpt),
+                EvalMode = parseResult.GetValue(evalModeOpt) == "holistic" ? EvalMode.Holistic : EvalMode.PerSkill,
+                ExcludeSkills = parseResult.GetValue(excludeSkillOpt) ?? [],
             };
 
             return await Run(config, cancellationToken);
@@ -398,6 +405,27 @@ public static class EvaluateCommand
         else if (config.KeepSessions)
         {
             Console.WriteLine("{Ansi.Yellow}⚠  --keep-sessions was set without --results-dir; sessions will not be persisted.{Ansi.Reset}");
+        }
+
+        // Pre-flight: --exclude-skill (leave-one-out ablation) must name skills that are actually
+        // on the plugin shelf. Validate up front so a typo aborts the command with a clear error
+        // BEFORE spending any tokens — a silently-unmatched name would otherwise degrade to an
+        // empty-shelf plugin arm and corrupt the marginal.
+        if (config.ExcludeSkills.Count > 0)
+        {
+            foreach (var target in allTargets)
+            {
+                if (target.PluginRoot is null) continue;
+                var missingExcl = AgentRunner.MissingShelfSkills(target.PluginRoot, config.ExcludeSkills);
+                if (missingExcl.Count > 0)
+                {
+                    var available = AgentRunner.ShelfSkillNames(target.PluginRoot);
+                    Console.Error.WriteLine(
+                        $"{Ansi.Red}❌ --exclude-skill named skill(s) not present on the '{target.Name}' shelf: " +
+                        $"{string.Join(", ", missingExcl)}. Available: {string.Join(", ", available)}.{Ansi.Reset}");
+                    return 1;
+                }
+            }
         }
 
         using var spinner = new Spinner();
@@ -884,10 +912,16 @@ public static class EvaluateCommand
             additionalAgents = await ResolveAdditionalAgents(scenario.Setup.AdditionalRequiredAgents, pluginRoot);
         }
 
-        // 2. Agent-isolated: target agent only (+ scenario deps)
-        var isolatedTask = AgentRunner.RunAgent(new RunOptions(scenario, null, target.EvalPath, config.Model, config.Verbose,
-            PluginRoot: null, Log: runLog, McpServers: target.McpServers, SessionsDir: sessionsDir,
-            SessionId: isolatedSessionId, Agent: agent, AdditionalSkills: additionalSkills, AdditionalAgents: additionalAgents), cancellationToken);
+        // 2. Agent-isolated: target agent only (+ scenario deps).
+        // Holistic mode skips this arm — the shelf self-selects (agent-plugin), so the isolated
+        // run's cost (~1/3 of the scenario) is not paid, and intentional multi-skill tasks are not
+        // false-failed by an arm that can only ever load the single target agent.
+        bool holistic = config.EvalMode == EvalMode.Holistic;
+        var isolatedTask = holistic
+            ? Task.FromResult(new RunMetrics())
+            : AgentRunner.RunAgent(new RunOptions(scenario, null, target.EvalPath, config.Model, config.Verbose,
+                PluginRoot: null, Log: runLog, McpServers: target.McpServers, SessionsDir: sessionsDir,
+                SessionId: isolatedSessionId, Agent: agent, AdditionalSkills: additionalSkills, AdditionalAgents: additionalAgents), cancellationToken);
         // 3. Agent-plugin: full plugin context + agent selected
         var pluginTask = AgentRunner.RunAgent(new RunOptions(scenario, null, target.EvalPath, config.Model, config.Verbose,
             PluginRoot: pluginRoot, Log: runLog, McpServers: target.McpServers, SessionsDir: sessionsDir,
@@ -932,7 +966,8 @@ public static class EvaluateCommand
         {
             if (reusedBaseline is null)
                 baselineMetrics.AssertionResults = await AssertionEvaluator.EvaluateAssertions(scenario.Assertions, baselineMetrics.AgentOutput, baselineMetrics.WorkDir, scenario.Timeout);
-            isolatedMetrics.AssertionResults = await AssertionEvaluator.EvaluateAssertions(scenario.Assertions, isolatedMetrics.AgentOutput, isolatedMetrics.WorkDir, scenario.Timeout);
+            if (!holistic)
+                isolatedMetrics.AssertionResults = await AssertionEvaluator.EvaluateAssertions(scenario.Assertions, isolatedMetrics.AgentOutput, isolatedMetrics.WorkDir, scenario.Timeout);
             pluginMetrics.AssertionResults = await AssertionEvaluator.EvaluateAssertions(scenario.Assertions, pluginMetrics.AgentOutput, pluginMetrics.WorkDir, scenario.Timeout);
         }
 
@@ -990,8 +1025,10 @@ public static class EvaluateCommand
             baselineJudge = judged;
             AccumulateJudgeTokens(baselineMetrics, baselineJudgeTokens);
         }
-        var (isolatedJudge, isolatedJudgeTokens) = await SafeJudge(Judge.JudgeRun(
-            scenario, isolatedMetrics, judgeOpts with { WorkDir = isolatedMetrics.WorkDir }, runLog, cancellationToken), "isolated", runLog);
+        var isolatedJudgeTask = holistic
+            ? Task.FromResult((new JudgeResult([], 0, ""), TokenUsage.Zero))
+            : Judge.JudgeRun(scenario, isolatedMetrics, judgeOpts with { WorkDir = isolatedMetrics.WorkDir }, runLog, cancellationToken);
+        var (isolatedJudge, isolatedJudgeTokens) = await SafeJudge(isolatedJudgeTask, "isolated", runLog);
         var (pluginJudge, pluginJudgeTokens) = await SafeJudge(Judge.JudgeRun(
             scenario, pluginMetrics, judgeOpts with { WorkDir = pluginMetrics.WorkDir }, runLog, cancellationToken), "plugin", runLog);
 
@@ -1007,7 +1044,7 @@ public static class EvaluateCommand
         bool pairwiseFromPlugin = false;
         if (usePairwise)
         {
-            pairwiseFromPlugin = pluginJudge.OverallScore < isolatedJudge.OverallScore;
+            pairwiseFromPlugin = holistic || pluginJudge.OverallScore < isolatedJudge.OverallScore;
             var worseSkilled = pairwiseFromPlugin ? pluginMetrics : isolatedMetrics;
             try
             {
@@ -1164,7 +1201,9 @@ public static class EvaluateCommand
             log($"⚠️ Overfitting check failed: {ex.Message}");
         }
 
-        var verdict = Comparator.ComputeVerdict(skill, comparisons, config.MinImprovement, config.RequireCompletion, config.ConfidenceLevel);
+        var verdict = config.EvalMode == EvalMode.Holistic
+            ? HolisticComparator.ComputeVerdict(skill, comparisons, config.MinImprovement, config.RequireCompletion, config.ConfidenceLevel)
+            : Comparator.ComputeVerdict(skill, comparisons, config.MinImprovement, config.RequireCompletion, config.ConfidenceLevel);
         verdict.OverfittingResult = overfittingResult;
 
         // Optional: generate fixed eval.yaml
@@ -1182,7 +1221,11 @@ public static class EvaluateCommand
             }
         }
 
-        var notActivatedIsolated = comparisons.Where(c => c.SkillActivationIsolated is { Activated: false } && c.ExpectActivation).ToList();
+        // Holistic mode skips the isolated arm entirely, so the isolated activation gate does not
+        // apply — activation is judged on the self-selecting plugin arm below.
+        var notActivatedIsolated = config.EvalMode == EvalMode.Holistic
+            ? new List<ScenarioComparison>()
+            : comparisons.Where(c => c.SkillActivationIsolated is { Activated: false } && c.ExpectActivation).ToList();
         var notActivatedPlugin = comparisons.Where(c => c.SkillActivationPlugin is { Activated: false } && c.ExpectActivation).ToList();
         var expectedNotActivated = comparisons.Where(c =>
             (c.SkillActivationIsolated is { Activated: false } || c.SkillActivationPlugin is { Activated: false }) && !c.ExpectActivation).ToList();
@@ -1286,27 +1329,35 @@ public static class EvaluateCommand
         var pluginRuns = runResults.Select(r => r.SkilledPlugin).ToList();
         var perRunPairwise = runResults.Select(r => r.Pairwise).ToList();
 
-        // Per-run improvement scores — effective score is min(isolated, plugin)
+        // Per-run improvement scores — per-skill mode's effective score is min(isolated, plugin);
+        // holistic mode reads the plugin arm alone (the isolated arm is skipped, so there is
+        // nothing to min against — the shelf self-selects and is graded whole).
         // Pairwise result is generated against the worse-scoring run (isolated
         // or plugin).  Apply it only to that matching comparison so it does not
         // skew the other one.
+        bool holistic = config.EvalMode == EvalMode.Holistic;
         var perRunIsolatedScores = new List<double>();
         var perRunPluginScores = new List<double>();
         for (int i = 0; i < baselineRuns.Count; i++)
         {
             var pw = perRunPairwise[i];
             bool pairwiseFromPlugin = runResults[i].PairwiseFromPlugin;
-            var isoComp = Comparator.CompareScenario(scenario.Name, baselineRuns[i], isolatedRuns[i],
-                pairwiseFromPlugin ? null : pw);
+            if (!holistic)
+            {
+                var isoComp = Comparator.CompareScenario(scenario.Name, baselineRuns[i], isolatedRuns[i],
+                    pairwiseFromPlugin ? null : pw);
+                perRunIsolatedScores.Add(isoComp.ImprovementScore);
+            }
             var plgComp = Comparator.CompareScenario(scenario.Name, baselineRuns[i], pluginRuns[i],
                 pairwiseFromPlugin ? pw : null);
-            perRunIsolatedScores.Add(isoComp.ImprovementScore);
             perRunPluginScores.Add(plgComp.ImprovementScore);
         }
 
-        var perRunScores = perRunIsolatedScores
-            .Zip(perRunPluginScores, (iso, plg) => Math.Min(iso, plg))
-            .ToList();
+        var perRunScores = holistic
+            ? perRunPluginScores
+            : perRunIsolatedScores
+                .Zip(perRunPluginScores, (iso, plg) => Math.Min(iso, plg))
+                .ToList();
 
         var avgBaseline = AverageResults(baselineRuns);
         var avgIsolated = AverageResults(isolatedRuns);
@@ -1344,14 +1395,16 @@ public static class EvaluateCommand
             Baseline = avgBaseline,
             SkilledIsolated = avgIsolated,
             SkilledPlugin = avgPlugin,
-            ImprovementScore = Math.Min(isoComparison.ImprovementScore, plgComparison.ImprovementScore),
+            ImprovementScore = holistic ? plgComparison.ImprovementScore : Math.Min(isoComparison.ImprovementScore, plgComparison.ImprovementScore),
             IsolatedImprovementScore = isoComparison.ImprovementScore,
             PluginImprovementScore = plgComparison.ImprovementScore,
-            Breakdown = isoComparison.ImprovementScore <= plgComparison.ImprovementScore
-                ? isoComparison.Breakdown : plgComparison.Breakdown,
+            Breakdown = holistic ? plgComparison.Breakdown
+                : (isoComparison.ImprovementScore <= plgComparison.ImprovementScore
+                    ? isoComparison.Breakdown : plgComparison.Breakdown),
             IsolatedBreakdown = isoComparison.Breakdown,
             PluginBreakdown = plgComparison.Breakdown,
             PairwiseResult = bestPairwise,
+            EvalMode = holistic ? EvalMode.Holistic : EvalMode.PerSkill,
         };
         comparison.PerRunScores = perRunScores;
         comparison.VarianceCV = Statistics.CoefficientOfVariation(perRunScores);
@@ -1500,13 +1553,20 @@ public static class EvaluateCommand
             additionalAgents = await ResolveAdditionalAgents(scenario.Setup.AdditionalRequiredAgents, pluginRoot);
         }
 
-        // 2. Skilled-isolated: target skill + declared dependencies
-        var isolatedTask = AgentRunner.RunAgent(new RunOptions(scenario, skill, evalSkill.EvalPath, config.Model, config.Verbose,
-            PluginRoot: null, Log: runLog, McpServers: evalSkill.McpServers, SessionsDir: sessionsDir,
-            SessionId: isolatedSessionId, AdditionalSkills: additionalSkills, AdditionalAgents: additionalAgents), cancellationToken);
+        // 2. Skilled-isolated: target skill + declared dependencies.
+        // Holistic mode skips this arm — the shelf self-selects (skilled-plugin), so the isolated
+        // run's cost (~1/3 of the scenario) is not paid, and intentional multi-skill tasks are not
+        // false-failed by an arm that can only ever load the single target skill.
+        bool holistic = config.EvalMode == EvalMode.Holistic;
+        var isolatedTask = holistic
+            ? Task.FromResult(new RunMetrics())
+            : AgentRunner.RunAgent(new RunOptions(scenario, skill, evalSkill.EvalPath, config.Model, config.Verbose,
+                PluginRoot: null, Log: runLog, McpServers: evalSkill.McpServers, SessionsDir: sessionsDir,
+                SessionId: isolatedSessionId, AdditionalSkills: additionalSkills, AdditionalAgents: additionalAgents), cancellationToken);
         // 3. Skilled-plugin: load entire plugin from plugin root directory
         var pluginTask = AgentRunner.RunAgent(new RunOptions(scenario, skill, evalSkill.EvalPath, config.Model, config.Verbose,
-            PluginRoot: pluginRoot, Log: runLog, McpServers: evalSkill.McpServers, SessionsDir: sessionsDir, SessionId: pluginSessionId), cancellationToken);
+            PluginRoot: pluginRoot, Log: runLog, McpServers: evalSkill.McpServers, SessionsDir: sessionsDir, SessionId: pluginSessionId,
+            ExcludeSkills: config.ExcludeSkills.Count > 0 ? config.ExcludeSkills : null), cancellationToken);
 
         RunMetrics baselineMetrics;
         RunMetrics isolatedMetrics;
@@ -1546,7 +1606,8 @@ public static class EvaluateCommand
         {
             if (reusedBaseline is null)
                 baselineMetrics.AssertionResults = await AssertionEvaluator.EvaluateAssertions(scenario.Assertions, baselineMetrics.AgentOutput, baselineMetrics.WorkDir, scenario.Timeout);
-            isolatedMetrics.AssertionResults = await AssertionEvaluator.EvaluateAssertions(scenario.Assertions, isolatedMetrics.AgentOutput, isolatedMetrics.WorkDir, scenario.Timeout);
+            if (!holistic)
+                isolatedMetrics.AssertionResults = await AssertionEvaluator.EvaluateAssertions(scenario.Assertions, isolatedMetrics.AgentOutput, isolatedMetrics.WorkDir, scenario.Timeout);
             pluginMetrics.AssertionResults = await AssertionEvaluator.EvaluateAssertions(scenario.Assertions, pluginMetrics.AgentOutput, pluginMetrics.WorkDir, scenario.Timeout);
         }
 
@@ -1599,8 +1660,10 @@ public static class EvaluateCommand
         // judge result is reused from the precomputed baseline when available.
         var judgeOpts = new JudgeOptions(config.JudgeModel, config.Verbose, config.JudgeTimeout, isolatedMetrics.WorkDir, skill.Path);
 
-        var isolatedJudgeTask = Judge.JudgeRun(
-            scenario, isolatedMetrics, judgeOpts with { WorkDir = isolatedMetrics.WorkDir }, runLog, cancellationToken);
+        var isolatedJudgeTask = holistic
+            ? Task.FromResult((new JudgeResult([], 0, ""), TokenUsage.Zero))
+            : Judge.JudgeRun(
+                scenario, isolatedMetrics, judgeOpts with { WorkDir = isolatedMetrics.WorkDir }, runLog, cancellationToken);
         var pluginJudgeTask = Judge.JudgeRun(
             scenario, pluginMetrics, judgeOpts with { WorkDir = pluginMetrics.WorkDir }, runLog, cancellationToken);
 
@@ -1643,7 +1706,7 @@ public static class EvaluateCommand
         bool pairwiseFromPlugin = false;
         if (usePairwise)
         {
-            pairwiseFromPlugin = pluginJudge.OverallScore < isolatedJudge.OverallScore;
+            pairwiseFromPlugin = holistic || pluginJudge.OverallScore < isolatedJudge.OverallScore;
             var worseSkilled = pairwiseFromPlugin
                 ? pluginMetrics : isolatedMetrics;
             try

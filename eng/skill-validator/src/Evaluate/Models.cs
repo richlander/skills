@@ -307,6 +307,9 @@ public sealed class ScenarioComparison
     public required RunResult Baseline { get; init; }
     public RunResult SkilledIsolated { get; init; } = null!;
     public RunResult? SkilledPlugin { get; init; }
+    /// <summary>The lens that produced this comparison. In <see cref="Evaluate.EvalMode.Holistic"/> the
+    /// isolated arm is a placeholder and all scores read the plugin arm.</summary>
+    public EvalMode EvalMode { get; init; } = EvalMode.PerSkill;
     public required double ImprovementScore { get; init; }
     public double IsolatedImprovementScore { get; init; }
     public double PluginImprovementScore { get; init; }
@@ -357,6 +360,8 @@ public sealed class SkillVerdict
     public bool? IsSignificant { get; init; }
     public double? IsolatedScore { get; set; }
     public double? PluginScore { get; set; }
+    /// <summary>The lens that produced this verdict (per-skill min-verdict, or holistic plugin-lens).</summary>
+    public EvalMode EvalMode { get; init; } = EvalMode.PerSkill;
     public required string Reason { get; set; }
     /// <summary>Categorizes why the verdict failed, if it did.</summary>
     public FailureKind? FailureKind { get; set; }
@@ -440,6 +445,18 @@ public enum ReporterType
     Markdown,
 }
 
+/// <summary>
+/// The evaluation lens. <see cref="PerSkill"/> is the per-skill-PR paradigm: baseline vs
+/// skilled-isolated vs skilled-plugin, graded on the conservative min(isolated, plugin) verdict —
+/// a claim about ONE skill's standalone value. <see cref="Holistic"/> is the whole-shelf benchmark:
+/// baseline vs skilled-plugin only, the agent self-selects from the shelf, and the verdict reads the
+/// plugin arm — a claim about the shelf answering a real distribution of questions. Holistic skips
+/// the isolated arm (≈⅓ of run cost) and lets intentional multi-skill tasks pass, since the isolated
+/// arm can never satisfy a task that needs two skills.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<EvalMode>))]
+public enum EvalMode { PerSkill, Holistic }
+
 public sealed record ValidatorConfig
 {
     public double MinImprovement { get; init; } = 0.1;
@@ -478,6 +495,16 @@ public sealed record ValidatorConfig
     /// and does not require a baseline.
     /// </summary>
     public bool NoJudge { get; init; }
+
+    /// <summary>The evaluation lens (per-skill or holistic). See <see cref="Evaluate.EvalMode"/>.</summary>
+    public EvalMode EvalMode { get; init; } = EvalMode.PerSkill;
+
+    /// <summary>
+    /// Leave-one-out ablation: skill names to omit from the plugin (skilled-plugin) arm's shelf.
+    /// Empty means the full shelf. Used to measure each skill's marginal contribution
+    /// (full − (shelf−X)) on multi-skill-pull scenarios.
+    /// </summary>
+    public IReadOnlyList<string> ExcludeSkills { get; init; } = [];
 }
 
 public static class DefaultWeights

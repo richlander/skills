@@ -20,7 +20,8 @@ public sealed record RunOptions(
     string? SessionsDir = null,
     string? SessionId = null,
     AgentInfo? Agent = null,
-    IReadOnlyList<AgentInfo>? AdditionalAgents = null);
+    IReadOnlyList<AgentInfo>? AdditionalAgents = null,
+    IReadOnlyList<string>? ExcludeSkills = null);
 
 public static class AgentRunner
 {
@@ -229,7 +230,8 @@ public static class AgentRunner
         string? sessionsDir = null,
         string? sessionId = null,
         AgentInfo? agent = null,
-        IReadOnlyList<AgentInfo>? additionalAgents = null)
+        IReadOnlyList<AgentInfo>? additionalAgents = null,
+        IReadOnlyList<string>? excludeSkills = null)
     {
         // Runtime guard: Skill and Agent are mutually exclusive targets.
         // (additionalSkills/additionalAgents are cross-dependencies and may co-exist with either target.)
@@ -348,6 +350,13 @@ public static class AgentRunner
         if (pluginRoot is not null)
         {
             skillDirs = ResolvePluginSkillDirectories(pluginRoot);
+            // Ablation: load the whole shelf MINUS the named skill(s). Our plugins use
+            // skills:["."] (pluginRoot is the parent the SDK scans for child SKILL.md
+            // folders), so we stage a copy of the shelf with the excluded skill dirs
+            // omitted and point the SDK at the staged parent. This is a leave-one-out
+            // over the skill lattice — the per-skill LIET marginal is full − (shelf−X).
+            if (excludeSkills is { Count: > 0 })
+                skillDirs = StageShelfMinus(pluginRoot, skillDirs, excludeSkills, log, verbose);
         }
         else if (skill is not null)
         {
@@ -441,6 +450,9 @@ public static class AgentRunner
         {
             Model = model,
             Streaming = true,
+            // Optional reasoning-effort override for thinking-on/off probes.
+            // Leave unset (null) to use the model's DefaultReasoningEffort.
+            ReasoningEffort = Environment.GetEnvironmentVariable("SKILL_VALIDATOR_REASONING_EFFORT") is { Length: > 0 } re ? re : null,
             WorkingDirectory = workDir,
             SkillDirectories = [..skillDirs, ..noiseDirs],
             ConfigDir = configDir,
@@ -527,6 +539,75 @@ public static class AgentRunner
         return dirs.ToArray();
     }
 
+    /// <summary>
+    /// Stages a copy of the plugin shelf with the named skill(s) omitted, for leave-one-out
+    /// ablation. Assumes the skills:["."] layout our plugins use — <paramref name="pluginRoot"/>
+    /// is the parent whose immediate child directories are the skills. Each excluded name is
+    /// matched against a child directory's basename (our skill dirs are named for the skill).
+    /// The staged shelf's plugin.json and every non-excluded child are copied verbatim, so the
+    /// SDK loads exactly the same shelf minus X. Throws if an excluded name matches no skill,
+    /// so a typo cannot silently ablate nothing. Returns the staged parent directory.
+    /// </summary>
+    // The child skill directory names available on a plugin shelf (skills:["."] layout).
+    public static IReadOnlyList<string> ShelfSkillNames(string pluginRoot)
+    {
+        var dirs = ResolvePluginSkillDirectories(pluginRoot);
+        var parent = dirs.Length == 1 ? dirs[0] : pluginRoot;
+        return Directory.EnumerateDirectories(parent)
+            .Select(d => Path.GetFileName(d)!)
+            .ToList();
+    }
+
+    // Names in skillNames that are NOT present on the shelf (case-insensitive). Used to
+    // fail-fast on a mistyped --exclude-skill before any agent runs.
+    public static IReadOnlyList<string> MissingShelfSkills(string pluginRoot, IReadOnlyList<string> skillNames)
+    {
+        var available = new HashSet<string>(ShelfSkillNames(pluginRoot), StringComparer.OrdinalIgnoreCase);
+        return skillNames.Where(n => !available.Contains(n)).ToList();
+    }
+
+    private static string[] StageShelfMinus(
+        string pluginRoot, string[] resolvedSkillDirs, IReadOnlyList<string> excludeSkills,
+        Action<string>? log, bool verbose)
+    {
+        // resolvedSkillDirs is [pluginRoot] for skills:["."]; the children are the skills.
+        var parent = resolvedSkillDirs.Length == 1 ? resolvedSkillDirs[0] : pluginRoot;
+        var excl = new HashSet<string>(excludeSkills, StringComparer.OrdinalIgnoreCase);
+        var matched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var staged = Path.Combine(Path.GetTempPath(), $"sv-shelf-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(staged);
+        _workDirs.Add(staged);
+
+        // Copy top-level files (plugin.json, etc.) verbatim.
+        foreach (var file in Directory.EnumerateFiles(pluginRoot))
+            File.Copy(file, Path.Combine(staged, Path.GetFileName(file)));
+
+        // Copy every child skill directory except the excluded ones.
+        foreach (var child in Directory.EnumerateDirectories(parent))
+        {
+            var name = Path.GetFileName(child);
+            if (excl.Contains(name))
+            {
+                matched.Add(name);
+                continue;
+            }
+            CopyDirectory(child, Path.Combine(staged, name));
+        }
+
+        var unmatched = excl.Where(e => !matched.Contains(e)).ToList();
+        if (unmatched.Count > 0)
+            throw new InvalidOperationException(
+                $"--exclude-skill named skill(s) not present on the shelf: {string.Join(", ", unmatched)}. " +
+                $"Available: {string.Join(", ", Directory.EnumerateDirectories(parent).Select(Path.GetFileName))}");
+
+        if (verbose)
+            log?.Invoke($"      ➖ Ablation: shelf minus [{string.Join(", ", matched)}] " +
+                        $"({Directory.EnumerateDirectories(staged).Count()} skill(s) remain)");
+
+        return [staged];
+    }
+
     public static async Task<RunMetrics> RunAgent(RunOptions options, CancellationToken cancellationToken = default)
     {
         // Validate mutual exclusivity
@@ -569,7 +650,7 @@ public static class AgentRunner
             await using var session = await client.CreateSessionAsync(
                 await BuildSessionConfig(options.Skill, options.PluginRoot, options.Model, workDir, options.McpServers,
                     options.AdditionalSkills, options.Log, options.Verbose, options.SessionsDir, options.SessionId,
-                    options.Agent, options.AdditionalAgents));
+                    options.Agent, options.AdditionalAgents, options.ExcludeSkills));
 
             var done = new TaskCompletionSource();
             var effectiveTimeout = options.Scenario.Timeout;
@@ -671,6 +752,9 @@ public static class AgentRunner
                         agentEvent.Data["outputTokens"] = JsonValue.Create(usage.Data.OutputTokens);
                         agentEvent.Data["cacheReadTokens"] = JsonValue.Create(usage.Data.CacheReadTokens);
                         agentEvent.Data["cacheWriteTokens"] = JsonValue.Create(usage.Data.CacheWriteTokens);
+                        agentEvent.Data["reasoningTokens"] = JsonValue.Create(usage.Data.ReasoningTokens);
+                        agentEvent.Data["reasoningEffort"] = JsonValue.Create(usage.Data.ReasoningEffort);
+                        agentEvent.Data["cost"] = JsonValue.Create(usage.Data.Cost);
                         agentEvent.Data["model"] = JsonValue.Create(usage.Data.Model);
                         break;
                     case UserMessageEvent userMsg:
