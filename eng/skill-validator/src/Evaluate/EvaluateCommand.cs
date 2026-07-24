@@ -2026,7 +2026,34 @@ public static class EvaluateCommand
 
     private static RunResult AverageResults(List<RunResult> runs)
     {
-        if (runs.Count == 1) return runs[0];
+        static RunOutcome ToOutcome(RunResult r)
+        {
+            // Functional assertions only — exclude reject-tools (the web/archaeology discipline
+            // guard, AssertionType.RejectTools), matching the analyzer's Satisfies definition so a
+            // run that only trips a reject-tools assertion still counts as functionally satisfying.
+            var func = r.Metrics.AssertionResults
+                .Where(a => a.Assertion.Type != AssertionType.RejectTools)
+                .ToList();
+            return new(
+                AssertionsPassed: func.Count(a => a.Passed),
+                AssertionsTotal: func.Count,
+                TaskCompleted: r.Metrics.TaskCompleted,
+                Cost: r.Metrics.Cost,
+                InputTokens: r.Metrics.InputTokens,
+                CacheReadTokens: r.Metrics.CacheReadTokens,
+                OutputTokens: r.Metrics.OutputTokens,
+                ToolCallCount: r.Metrics.ToolCallCount,
+                TurnCount: r.Metrics.TurnCount,
+                WallTimeMs: r.Metrics.WallTimeMs);
+        }
+
+        var perRun = runs.Select(ToOutcome).ToList();
+
+        if (runs.Count == 1)
+        {
+            runs[0].Metrics.PerRun = perRun;
+            return runs[0];
+        }
 
         static double Avg(IEnumerable<double> nums) => nums.Average();
         static int AvgRound(IEnumerable<int> nums) => (int)Math.Round(nums.Average());
@@ -2056,6 +2083,7 @@ public static class EvaluateCommand
             AgentOutput = runs[^1].Metrics.AgentOutput,
             Events = runs[^1].Metrics.Events,
             WorkDir = runs[^1].Metrics.WorkDir,
+            PerRun = perRun,
         };
 
         var avgJudge = new JudgeResult(

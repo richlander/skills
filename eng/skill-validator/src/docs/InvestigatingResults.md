@@ -156,10 +156,34 @@ Each of `baseline`, `skilledIsolated`, and `skilledPlugin` contains a `metrics` 
 | `errorCount` | Number of errors during the run |
 | `assertionResults[]` | Per-assertion pass/fail with messages |
 | `agentOutput` | The agent's final text output |
+| `perRun[]` | Per-run raw outcomes, preserved **before** the k runs are averaged into this representative object (see below). Absent on individual (un-averaged) run metrics and on datasets produced before per-run capture was added. |
 
 > **Tip:** To get the total input/output token cost for an eval scenario, sum the token fields across baseline and skilled runs. For example, a scenario's total input tokens are `baseline.metrics.inputTokens + skilledIsolated.metrics.inputTokens` (plus `skilledPlugin.metrics.inputTokens` if a plugin run is present). The `judge*` fields track the judging overhead separately.
 
 > **Note:** The quality scores shown in the summary table (e.g., "4.0/5") come from `baseline.judgeResult.overallScore`, `skilledIsolated.judgeResult.overallScore`, etc. — they are on the run result object, not inside `metrics`. When parsing `results.json`, look for `judgeResult.overallScore` alongside `metrics` on each run.
+
+### Per-run outcomes (`perRun[]`)
+
+When `--runs > 1`, the harness averages the k runs of a (scenario, arm) into a single representative
+`metrics` object for the summary/report path. That average is lossy for anything the downstream
+graded-yield analysis needs: it keeps only the **last** run's `assertionResults`/`agentOutput`/`events`
+and **OR**s `taskCompleted` across runs. The `perRun[]` array preserves every run's raw outcome so a
+consumer can score the `Fails → Satisfies → Delivers` ladder (graded yield `K / k`) and run the cost
+bootstrap without the averaged summary.
+
+Each element is policy-free — raw counts and cost only; the consuming analyzer owns the ladder
+definition (e.g. *Satisfies* = at least one functional assertion and all pass):
+
+| Field | Description |
+|-------|-------------|
+| `assertionsPassed` | Count of this run's **functional** assertions that passed (reject-tools excluded) |
+| `assertionsTotal` | Total **functional** assertions evaluated this run (reject-tools excluded) |
+| `taskCompleted` | Whether this run's assertions passed (per-run, not OR'd) |
+| `cost` | This run's cost |
+| `inputTokens` / `cacheReadTokens` / `outputTokens` | Token fields, sufficient to recompute this run's IET identically to the averaged arm |
+| `toolCallCount` / `turnCount` / `wallTimeMs` | Per-run effort/latency |
+
+When `--runs == 1`, `perRun[]` holds the single run's outcome (the representative object is that run).
 
 ### eval.yaml scenario options
 
