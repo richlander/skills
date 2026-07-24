@@ -17,6 +17,7 @@ namespace SkillValidator;
 [JsonSerializable(typeof(ScenarioComparison))]
 [JsonSerializable(typeof(RunResult))]
 [JsonSerializable(typeof(RunMetrics))]
+[JsonSerializable(typeof(RunOutcome))]
 [JsonSerializable(typeof(BaselineFile))]
 [JsonSerializable(typeof(BaselineScenarioEntry))]
 [JsonSerializable(typeof(JudgeResult))]

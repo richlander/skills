@@ -192,6 +192,15 @@ public sealed class RunMetrics
     public string WorkDir { get; set; } = "";
 
     /// <summary>
+    /// Per-run outcomes for this arm, preserved before <c>AverageResults</c> collapses the k runs
+    /// into this single representative metrics object. Enables the downstream graded-yield ladder
+    /// (Fails → Satisfies → Delivers) and the cost bootstrap, which need every run's pass/cost/turn
+    /// data rather than the averaged summary. Policy-free: raw counts and cost only; the analyzer
+    /// owns the ladder definition. Null on individual (un-averaged) run metrics.
+    /// </summary>
+    public List<RunOutcome>? PerRun { get; set; }
+
+    /// <summary>
     /// Creates a per-run copy.  Scalar fields are copied by value and the mutable
     /// collections are re-wrapped in fresh instances so mutating the clone (e.g.
     /// accumulating judge tokens) never affects the source.  This is essential when a
@@ -226,6 +235,26 @@ public sealed class RunMetrics
 public sealed record RunResult(
     RunMetrics Metrics,
     JudgeResult JudgeResult);
+
+/// <summary>
+/// A single run's raw outcome, captured per arm before averaging so the downstream analyzer can
+/// score the graded-yield ladder (Fails → Satisfies → Delivers) and run the cost bootstrap. Kept
+/// policy-free: the analyzer defines Satisfies (all functional assertions pass) and Delivers from
+/// these primitives. <see cref="AssertionsPassed"/>/<see cref="AssertionsTotal"/> count FUNCTIONAL
+/// assertions only (reject-tools excluded), matching the analyzer's Satisfies definition. IET is
+/// recomputed from the token fields exactly as for the averaged arm.
+/// </summary>
+public sealed record RunOutcome(
+    int AssertionsPassed,
+    int AssertionsTotal,
+    bool TaskCompleted,
+    double Cost,
+    int InputTokens,
+    int CacheReadTokens,
+    int OutputTokens,
+    int ToolCallCount,
+    int TurnCount,
+    long WallTimeMs);
 
 // --- Pairwise judging ---
 
