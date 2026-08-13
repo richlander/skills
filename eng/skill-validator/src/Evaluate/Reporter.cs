@@ -258,12 +258,16 @@ public static class Reporter
             Console.WriteLine(line);
         }
 
-        // Effective score line (when plugin run exists, show min)
+        // Effective score line: holistic mode grades the plugin arm alone; per-skill mode keeps
+        // the conservative min(isolated, plugin) floor.
         if (hasPlugin)
         {
             var isoScore = scenario.IsolatedImprovementScore;
             var plugScore = scenario.PluginImprovementScore;
-            Console.WriteLine($"      {Ansi.Bold}Effective score:{Ansi.Reset} min(isolated={FormatPct(isoScore)}, plugin={FormatPct(plugScore)}) = {FormatPct(scenario.ImprovementScore)}");
+            var formula = scenario.EvalMode == EvalMode.Holistic
+                ? $"plugin={FormatPct(plugScore)}"
+                : $"min(isolated={FormatPct(isoScore)}, plugin={FormatPct(plugScore)})";
+            Console.WriteLine($"      {Ansi.Bold}Effective score:{Ansi.Reset} {formula} = {FormatPct(scenario.ImprovementScore)}");
         }
 
         // Skill activation info — isolated
@@ -513,8 +517,9 @@ public static class Reporter
                     plugQualityCol = FormatQualityCell(baseScore, plugScore, bTimedOut, plugTimedOut, out plugQualityDelta);
                 }
 
-                // Use the effective (worse) run's quality delta for footnotes
-                bool pluginIsEffective = s.SkilledPlugin is not null && s.PluginImprovementScore < s.IsolatedImprovementScore;
+                // Holistic mode always grades plugin; per-skill mode uses the worse arm.
+                bool pluginIsEffective = s.SkilledPlugin is not null
+                    && (s.EvalMode == EvalMode.Holistic || s.PluginImprovementScore < s.IsolatedImprovementScore);
                 double? qualityDelta = pluginIsEffective ? plugQualityDelta : isoQualityDelta;
                 var icon = s.ImprovementScore > 0 ? "✅" : s.ImprovementScore < 0 ? "❌" : "🟡";
 
