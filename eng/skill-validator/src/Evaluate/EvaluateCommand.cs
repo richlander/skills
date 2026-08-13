@@ -850,6 +850,9 @@ public static class EvaluateCommand
             r.Baseline.Metrics.TimedOut || r.SkilledIsolated.Metrics.TimedOut || r.SkilledPlugin.Metrics.TimedOut);
         comparison.ExpectActivation = scenario.ExpectActivation;
         comparison.ExpectedSkill = scenario.ExpectedSkill;
+        comparison.ExpectedSkills = scenario.ExpectedSkills;
+        comparison.SkillActivationIsolatedPerRun = allIsoActivations;
+        comparison.SkillActivationPluginPerRun = allPlgActivations;
         comparison.FailedRunCount = failedRunCount;
 
         return comparison;
@@ -1448,6 +1451,9 @@ public static class EvaluateCommand
         comparison.TimeoutSeconds = scenario.Timeout;
         comparison.ExpectActivation = scenario.ExpectActivation;
         comparison.ExpectedSkill = scenario.ExpectedSkill;
+        comparison.ExpectedSkills = scenario.ExpectedSkills;
+        comparison.SkillActivationIsolatedPerRun = allIsoActivations;
+        comparison.SkillActivationPluginPerRun = allPlgActivations;
         comparison.FailedRunCount = failedRunCount;
 
         return comparison;
@@ -1497,6 +1503,7 @@ public static class EvaluateCommand
             TimeoutSeconds = scenario.Timeout,
             ExpectActivation = scenario.ExpectActivation,
             ExpectedSkill = scenario.ExpectedSkill,
+            ExpectedSkills = scenario.ExpectedSkills,
         };
 
     private static async Task<RunExecutionResult> ExecuteRun(

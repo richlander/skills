@@ -109,6 +109,76 @@ public class ParseEvalConfigTests
     }
 
     [Fact]
+    public void NormalizesExpectedSkillToSingletonList()
+    {
+        var yaml = """
+            scenarios:
+              - name: "Single skill"
+                prompt: "Do it"
+                expected_skill: base-skill
+            """;
+
+        var scenario = EvalSchema.ParseEvalConfig(yaml).Scenarios[0];
+
+        Assert.Equal("base-skill", scenario.ExpectedSkill);
+        Assert.Equal(["base-skill"], scenario.ExpectedSkills);
+    }
+
+    [Fact]
+    public void ParsesExpectedSkillsForCompositionTask()
+    {
+        var yaml = """
+            scenarios:
+              - name: "Composed task"
+                prompt: "Do it"
+                expected_skills:
+                  - base-skill
+                  - format-skill
+                  - shape-skill
+            """;
+
+        var scenario = EvalSchema.ParseEvalConfig(yaml).Scenarios[0];
+
+        Assert.Null(scenario.ExpectedSkill);
+        Assert.Equal(["base-skill", "format-skill", "shape-skill"], scenario.ExpectedSkills);
+    }
+
+    [Fact]
+    public void RejectsBothExpectedSkillForms()
+    {
+        var yaml = """
+            scenarios:
+              - name: "Ambiguous task"
+                prompt: "Do it"
+                expected_skill: base-skill
+                expected_skills:
+                  - base-skill
+                  - format-skill
+            """;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => EvalSchema.ParseEvalConfig(yaml));
+
+        Assert.Contains("cannot set both", ex.Message);
+    }
+
+    [Fact]
+    public void RejectsDuplicateExpectedSkills()
+    {
+        var yaml = """
+            scenarios:
+              - name: "Duplicate task"
+                prompt: "Do it"
+                expected_skills:
+                  - format-skill
+                  - FORMAT-SKILL
+            """;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => EvalSchema.ParseEvalConfig(yaml));
+
+        Assert.Contains("must be unique", ex.Message);
+    }
+
+    [Fact]
     public void ParsesSetupCommands()
     {
         var yaml = """

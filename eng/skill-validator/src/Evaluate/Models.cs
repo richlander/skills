@@ -98,7 +98,8 @@ public sealed record EvalScenario(
     int? MaxTurns = null,
     int? MaxTokens = null,
     bool ExpectActivation = true,
-    string? ExpectedSkill = null);
+    string? ExpectedSkill = null,
+    IReadOnlyList<string>? ExpectedSkills = null);
 
 public sealed record EvalConfig(
     IReadOnlyList<EvalScenario> Scenarios,
@@ -353,6 +354,10 @@ public sealed class ScenarioComparison
     public double? VarianceCV { get; set; }
     public SkillActivationInfo? SkillActivationIsolated { get; set; }
     public SkillActivationInfo? SkillActivationPlugin { get; set; }
+    /// <summary>Run-ordered isolated-arm activation records, used for pull-consistency analysis.</summary>
+    public IReadOnlyList<SkillActivationInfo>? SkillActivationIsolatedPerRun { get; set; }
+    /// <summary>Run-ordered plugin-arm activation records, used for pull-consistency analysis.</summary>
+    public IReadOnlyList<SkillActivationInfo>? SkillActivationPluginPerRun { get; set; }
     public SubagentActivationInfo? SubagentActivationIsolated { get; set; }
     public SubagentActivationInfo? SubagentActivationPlugin { get; set; }
     public bool TimedOut { get; set; }
@@ -363,6 +368,12 @@ public sealed class ScenarioComparison
     /// <summary>Methodology prior: the ONE target skill the scenario is designed to exercise (from eval.yaml expected_skill). Null when unset. Compared against the skills actually pulled to report over/under-fire and a target-skill hit rate.</summary>
     [JsonPropertyName("expectedSkill")]
     public string? ExpectedSkill { get; set; }
+    /// <summary>
+    /// Methodology prior: the complete stable skill set this scenario is designed to exercise.
+    /// A legacy <c>expected_skill</c> value is normalized to a singleton list.
+    /// </summary>
+    [JsonPropertyName("expectedSkills")]
+    public IReadOnlyList<string>? ExpectedSkills { get; set; }
     /// <summary>Number of individual runs that failed with exceptions and were excluded from aggregation.</summary>
     public int FailedRunCount { get; set; }
     /// <summary>Non-null when the entire scenario failed with an execution error (not a timeout).</summary>

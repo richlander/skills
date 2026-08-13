@@ -139,6 +139,7 @@ public static class EvalSchema
             throw new InvalidOperationException("Scenario prompt is required");
 
         var assertions = raw.Assertions?.Select(ParseAssertion).ToList();
+        var expectedSkills = ParseExpectedSkills(raw);
 
         SetupConfig? setup = null;
         if (raw.Setup is not null)
@@ -165,7 +166,30 @@ public static class EvalSchema
             MaxTurns: raw.MaxTurns,
             MaxTokens: raw.MaxTokens,
             ExpectActivation: raw.ExpectActivation ?? true,
-            ExpectedSkill: raw.ExpectedSkill);
+            ExpectedSkill: raw.ExpectedSkill,
+            ExpectedSkills: expectedSkills);
+    }
+
+    private static IReadOnlyList<string>? ParseExpectedSkills(RawScenario raw)
+    {
+        if (raw.ExpectedSkill is not null && raw.ExpectedSkills is not null)
+            throw new InvalidOperationException(
+                $"Scenario '{raw.Name}' cannot set both expected_skill and expected_skills");
+
+        var values = raw.ExpectedSkills
+            ?? (raw.ExpectedSkill is null ? null : [raw.ExpectedSkill]);
+        if (values is null)
+            return null;
+        if (values.Count == 0 || values.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidOperationException(
+                $"Scenario '{raw.Name}' expected skill names must be non-empty");
+
+        var normalized = values.Select(v => v.Trim()).ToList();
+        if (normalized.Distinct(StringComparer.OrdinalIgnoreCase).Count() != normalized.Count)
+            throw new InvalidOperationException(
+                $"Scenario '{raw.Name}' expected skill names must be unique");
+
+        return normalized;
     }
 
     private static Assertion ParseAssertion(RawAssertion raw)
@@ -265,6 +289,7 @@ public static class EvalSchema
         public int? MaxTokens { get; set; }
         public bool? ExpectActivation { get; set; }
         public string? ExpectedSkill { get; set; }
+        public List<string>? ExpectedSkills { get; set; }
     }
 
     internal sealed class RawSetup

@@ -97,7 +97,10 @@ Each scenario includes two required runs (baseline + isolated). It may also incl
 | Field | Description |
 |-------|-------------|
 | `scenarioName` | Human-readable scenario name |
-| `expectedSkill` | Methodology prior: the ONE target skill the scenario is designed to exercise (from eval.yaml `expected_skill`). Optional/null when unset. Compare against the skills actually pulled (`skillActivationPlugin.detectedSkills`) to measure over/under-fire and a target-skill hit rate |
+| `expectedSkill` | Backward-compatible single-skill prior from eval.yaml `expected_skill`. Optional/null when `expected_skills` is used |
+| `expectedSkills` | Normalized methodology prior for the complete stable skill set a scenario is designed to exercise. A legacy `expected_skill` value appears here as a singleton list; intentional composition tasks use eval.yaml `expected_skills` |
+| `skillActivationPluginPerRun` | Run-ordered plugin activation records. Compare each run's `detectedSkills` with `expectedSkills` to classify consistent-single, consistent-same-set, and variable pulls |
+| `skillActivationIsolatedPerRun` | Run-ordered isolated activation records, retained for targeted absolute-sufficiency probes |
 | `baseline` | Run without the skill |
 | `skilledIsolated` | Run with only this skill loaded |
 | `skilledPlugin` | Optional run with the full plugin loaded (may be null when plugin runs are disabled) |
