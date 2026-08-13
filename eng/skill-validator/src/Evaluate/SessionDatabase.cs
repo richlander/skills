@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
 namespace SkillValidator.Evaluate;
@@ -15,9 +16,10 @@ public sealed class SessionDatabase : IDisposable
     /// <summary>
     /// Current schema version stamped into <c>schema_info</c>. Bump whenever the persisted
     /// shape changes (e.g. a new column) so external tools can detect the change. History:
-    /// 2 = added <c>sessions.rubric</c>; 3 = added <c>sessions.baseline_key</c>.
+    /// 2 = added <c>sessions.rubric</c>; 3 = added <c>sessions.baseline_key</c>;
+    /// 4 = added <c>sessions.expected_skills</c> and <c>sessions.eval_mode</c>.
     /// </summary>
-    private const string SchemaVersion = "3";
+    private const string SchemaVersion = "4";
 
     private readonly SqliteConnection _connection;
     private readonly Lock _lock = new();
@@ -60,7 +62,9 @@ public sealed class SessionDatabase : IDisposable
                 started_at TEXT NOT NULL,
                 completed_at TEXT,
                 rubric TEXT,
-                baseline_key TEXT
+                baseline_key TEXT,
+                expected_skills TEXT,
+                eval_mode TEXT
             );
 
             CREATE TABLE IF NOT EXISTS run_results (
@@ -73,6 +77,8 @@ public sealed class SessionDatabase : IDisposable
         cmd.ExecuteNonQuery();
         EnsureSessionsRubricColumn();
         EnsureSessionsBaselineKeyColumn();
+        EnsureSessionsExpectedSkillsColumn();
+        EnsureSessionsEvalModeColumn();
         // Stamp the version after migrations so the recorded value always reflects the
         // columns that are actually present (single source of truth: SchemaVersion).
         SetSchemaInfo("version", SchemaVersion);
@@ -95,6 +101,26 @@ public sealed class SessionDatabase : IDisposable
 
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = "ALTER TABLE sessions ADD COLUMN baseline_key TEXT";
+        cmd.ExecuteNonQuery();
+    }
+
+    private void EnsureSessionsExpectedSkillsColumn()
+    {
+        if (HasColumn("sessions", "expected_skills"))
+            return;
+
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "ALTER TABLE sessions ADD COLUMN expected_skills TEXT";
+        cmd.ExecuteNonQuery();
+    }
+
+    private void EnsureSessionsEvalModeColumn()
+    {
+        if (HasColumn("sessions", "eval_mode"))
+            return;
+
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "ALTER TABLE sessions ADD COLUMN eval_mode TEXT";
         cmd.ExecuteNonQuery();
     }
 
@@ -156,14 +182,18 @@ public sealed class SessionDatabase : IDisposable
     public void RegisterSession(string sessionId, string skillName, string skillPath,
         string scenarioName, int runIndex, string role, string model,
         string? configDir, string? workDir, string? prompt = null, string? skillSha = null,
-        string? rubric = null, string? baselineKey = null)
+        string? rubric = null, string? baselineKey = null,
+        IReadOnlyList<string>? expectedSkills = null, string? evalMode = null)
     {
+        var expectedSkillsJson = expectedSkills is null
+            ? null
+            : JsonSerializer.Serialize(expectedSkills.ToArray(), SkillValidatorJsonContext.Default.StringArray);
         lock (_lock)
         {
             using var cmd = _connection.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO sessions (id, skill_name, skill_path, scenario_name, run_index, role, model, config_dir, work_dir, prompt, skill_sha, rubric, baseline_key, status, started_at)
-                VALUES ($id, $skill_name, $skill_path, $scenario_name, $run_index, $role, $model, $config_dir, $work_dir, $prompt, $skill_sha, $rubric, $baseline_key, 'running', $started_at)
+                INSERT INTO sessions (id, skill_name, skill_path, scenario_name, run_index, role, model, config_dir, work_dir, prompt, skill_sha, rubric, baseline_key, expected_skills, eval_mode, status, started_at)
+                VALUES ($id, $skill_name, $skill_path, $scenario_name, $run_index, $role, $model, $config_dir, $work_dir, $prompt, $skill_sha, $rubric, $baseline_key, $expected_skills, $eval_mode, 'running', $started_at)
                 """;
             cmd.Parameters.AddWithValue("$id", sessionId);
             cmd.Parameters.AddWithValue("$skill_name", skillName);
@@ -178,6 +208,8 @@ public sealed class SessionDatabase : IDisposable
             cmd.Parameters.AddWithValue("$skill_sha", (object?)skillSha ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$rubric", (object?)rubric ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$baseline_key", (object?)baselineKey ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$expected_skills", (object?)expectedSkillsJson ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$eval_mode", (object?)evalMode ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$started_at", DateTimeOffset.UtcNow.ToString("o"));
             cmd.ExecuteNonQuery();
         }
@@ -286,7 +318,8 @@ public sealed class SessionDatabase : IDisposable
         cmd.CommandText = $"""
             SELECT s.id, s.skill_name, s.skill_path, s.scenario_name, s.run_index, s.role, s.model,
                    s.config_dir, s.work_dir, s.prompt, s.skill_sha, s.rubric, s.status,
-                   r.metrics_json, r.judge_json, r.pairwise_json, s.baseline_key
+                   r.metrics_json, r.judge_json, r.pairwise_json, s.baseline_key,
+                   s.expected_skills, s.eval_mode
             FROM sessions s
             LEFT JOIN run_results r ON s.id = r.session_id
             {whereClause}
@@ -312,7 +345,9 @@ public sealed class SessionDatabase : IDisposable
                 MetricsJson: reader.IsDBNull(13) ? null : reader.GetString(13),
                 JudgeJson: reader.IsDBNull(14) ? null : reader.GetString(14),
                 PairwiseJson: reader.IsDBNull(15) ? null : reader.GetString(15),
-                BaselineKey: reader.IsDBNull(16) ? null : reader.GetString(16)));
+                BaselineKey: reader.IsDBNull(16) ? null : reader.GetString(16),
+                ExpectedSkillsJson: reader.IsDBNull(17) ? null : reader.GetString(17),
+                EvalMode: reader.IsDBNull(18) ? null : reader.GetString(18)));
         }
         return results;
     }
@@ -358,4 +393,6 @@ public sealed record SessionRecord(
     string? MetricsJson,
     string? JudgeJson,
     string? PairwiseJson,
-    string? BaselineKey = null);
+    string? BaselineKey = null,
+    string? ExpectedSkillsJson = null,
+    string? EvalMode = null);

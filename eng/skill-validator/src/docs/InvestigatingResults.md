@@ -101,6 +101,11 @@ Each scenario includes two required runs (baseline + isolated). It may also incl
 | `expectedSkills` | Normalized methodology prior for the complete stable skill set a scenario is designed to exercise. A legacy `expected_skill` value appears here as a singleton list; intentional composition tasks use eval.yaml `expected_skills` |
 | `skillActivationPluginPerRun` | Run-ordered plugin activation records. Compare each run's `detectedSkills` with `expectedSkills` to classify consistent-single, consistent-same-set, and variable pulls |
 | `skillActivationIsolatedPerRun` | Run-ordered isolated activation records, retained for targeted absolute-sufficiency probes |
+
+The session database is schema version 4. Each `sessions` row also persists `expected_skills`
+(JSON array) and `eval_mode`, so `evaluate rejudge` reconstructs the original methodology prior
+and keeps holistic runs on the plugin-only verdict instead of reverting to the legacy
+`min(isolated, plugin)` lens.
 | `baseline` | Run without the skill |
 | `skilledIsolated` | Run with only this skill loaded |
 | `skilledPlugin` | Optional run with the full plugin loaded (may be null when plugin runs are disabled) |

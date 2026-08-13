@@ -900,11 +900,11 @@ public static class EvaluateCommand
         var reusedBaseline = baselineStore?.TryGetBaseline(scenario, target.EvalPath);
 
         sessionDb?.RegisterSession(baselineSessionId, agent.Name, agent.Path, scenario.Name, runIndex,
-            reusedBaseline is not null ? "baseline-reused" : "baseline", config.Model, baselineConfigDir, null, scenario.Prompt, targetSha, rubricJson, baselineKey);
+            reusedBaseline is not null ? "baseline-reused" : "baseline", config.Model, baselineConfigDir, null, scenario.Prompt, targetSha, rubricJson, baselineKey, scenario.ExpectedSkills, config.EvalMode.ToString());
         sessionDb?.RegisterSession(isolatedSessionId, agent.Name, agent.Path, scenario.Name, runIndex,
-            "with-agent-isolated", config.Model, isolatedConfigDir, null, scenario.Prompt, targetSha, rubricJson, baselineKey);
+            "with-agent-isolated", config.Model, isolatedConfigDir, null, scenario.Prompt, targetSha, rubricJson, baselineKey, scenario.ExpectedSkills, config.EvalMode.ToString());
         sessionDb?.RegisterSession(pluginSessionId, agent.Name, agent.Path, scenario.Name, runIndex,
-            "with-agent-plugin", config.Model, pluginConfigDir, null, scenario.Prompt, targetSha, rubricJson, baselineKey);
+            "with-agent-plugin", config.Model, pluginConfigDir, null, scenario.Prompt, targetSha, rubricJson, baselineKey, scenario.ExpectedSkills, config.EvalMode.ToString());
 
         // Resolve additional_required_skills/agents for the isolated run
         IReadOnlyList<SkillInfo>? additionalSkills = null;
@@ -1545,11 +1545,11 @@ public static class EvaluateCommand
         var reusedBaseline = baselineStore?.TryGetBaseline(scenario, evalSkill.EvalPath);
 
         sessionDb?.RegisterSession(baselineSessionId, skill.Name, skill.Path, scenario.Name, runIndex,
-            reusedBaseline is not null ? "baseline-reused" : "baseline", config.Model, baselineConfigDir, null, scenario.Prompt, skillSha, rubricJson, baselineKey);
+            reusedBaseline is not null ? "baseline-reused" : "baseline", config.Model, baselineConfigDir, null, scenario.Prompt, skillSha, rubricJson, baselineKey, scenario.ExpectedSkills, config.EvalMode.ToString());
         sessionDb?.RegisterSession(isolatedSessionId, skill.Name, skill.Path, scenario.Name, runIndex,
-            "with-skill-isolated", config.Model, isolatedConfigDir, null, scenario.Prompt, skillSha, rubricJson, baselineKey);
+            "with-skill-isolated", config.Model, isolatedConfigDir, null, scenario.Prompt, skillSha, rubricJson, baselineKey, scenario.ExpectedSkills, config.EvalMode.ToString());
         sessionDb?.RegisterSession(pluginSessionId, skill.Name, skill.Path, scenario.Name, runIndex,
-            "with-skill-plugin", config.Model, pluginConfigDir, null, scenario.Prompt, skillSha, rubricJson, baselineKey);
+            "with-skill-plugin", config.Model, pluginConfigDir, null, scenario.Prompt, skillSha, rubricJson, baselineKey, scenario.ExpectedSkills, config.EvalMode.ToString());
 
         // Resolve additional_required_skills/agents for the isolated skill run
         IReadOnlyList<SkillInfo>? additionalSkills = null;

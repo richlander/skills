@@ -36,7 +36,8 @@ public class SessionDatabaseTests : IDisposable
     {
         var rubricJson = JsonSerializer.Serialize(new[] { "Quality", "Completeness" });
 
-        _db.RegisterSession("s1", "my-skill", "/path/to/skill", "scenario-a", 0, "baseline", "gpt-4.1", "sessions/s1", "/work", "Fix the bug", "abcdef012345", rubricJson);
+        _db.RegisterSession("s1", "my-skill", "/path/to/skill", "scenario-a", 0, "baseline", "gpt-4.1", "sessions/s1", "/work", "Fix the bug", "abcdef012345", rubricJson,
+            expectedSkills: ["base-skill", "format-skill"], evalMode: "Holistic");
         _db.CompleteSession("s1", "completed", """{"TokenEstimate":100}""");
 
         var sessions = _db.GetCompletedSessions();
@@ -53,6 +54,10 @@ public class SessionDatabaseTests : IDisposable
         Assert.Equal("Fix the bug", s.Prompt);
         Assert.Equal("abcdef012345", s.SkillSha);
         Assert.Equal(rubricJson, s.RubricJson);
+        var expectedSkills = JsonSerializer.Deserialize<string[]>(s.ExpectedSkillsJson!);
+        Assert.NotNull(expectedSkills);
+        Assert.Equal(["base-skill", "format-skill"], expectedSkills);
+        Assert.Equal("Holistic", s.EvalMode);
         Assert.Equal("""{"TokenEstimate":100}""", s.MetricsJson);
         Assert.Null(s.JudgeJson);
         Assert.Null(s.PairwiseJson);
@@ -249,7 +254,7 @@ public class SessionDatabaseTests : IDisposable
     {
         var info = _db.GetSchemaInfo();
         Assert.Equal("skill-validator", info["type"]);
-        Assert.Equal("3", info["version"]);
+        Assert.Equal("4", info["version"]);
     }
 
     [Fact]
@@ -404,7 +409,7 @@ public class SessionDatabaseTests : IDisposable
             using var upgradedDb = new SessionDatabase(legacyDbPath);
             var legacySession = Assert.Single(upgradedDb.GetCompletedSessions());
             Assert.Null(legacySession.RubricJson);
-            Assert.Equal("3", upgradedDb.GetSchemaInfo()["version"]);
+            Assert.Equal("4", upgradedDb.GetSchemaInfo()["version"]);
 
             var rubricJson = JsonSerializer.Serialize(new[] { "Quality" });
             upgradedDb.RegisterSession("s2", "skill", "/p", "scn", 1, "with-skill", "model", null, null, "Prompt", null, rubricJson);

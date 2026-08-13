@@ -143,7 +143,10 @@ public static class RejudgeCommand
             foreach (var scenarioGroup in skillGroup.GroupBy(g => g.Key.ScenarioName))
             {
                 var scenarioName = scenarioGroup.Key;
-                var storedRubric = GetStoredRubric(skillName, scenarioName, scenarioGroup.SelectMany(g => g));
+                var scenarioSessions = scenarioGroup.SelectMany(g => g).ToList();
+                var storedRubric = GetStoredRubric(skillName, scenarioName, scenarioSessions);
+                var expectedSkills = GetStoredExpectedSkills(scenarioSessions);
+                var evalMode = GetStoredEvalMode(scenarioSessions);
                 var rejudgedRuns = new List<RejudgedRun>();
 
                 foreach (var runGroup in scenarioGroup)
@@ -156,7 +159,7 @@ public static class RejudgeCommand
 
                     var pluginSess = runGroup.FirstOrDefault(s => s.Role == "with-skill-plugin");
                     var prompt = baselineSess.Prompt ?? isolatedSess.Prompt ?? pluginSess?.Prompt ?? "";
-                    var scenario = new EvalScenario(scenarioName, prompt, Rubric: storedRubric);
+                    var scenario = new EvalScenario(scenarioName, prompt, Rubric: storedRubric, ExpectedSkills: expectedSkills);
                     Action<string>? log = verbose ? msg => Console.WriteLine($"  [{scenarioName}/{runGroup.Key.RunIndex + 1}] {msg}") : null;
 
                     rejudgedRuns.Add(await JudgeRunGroup(
@@ -169,14 +172,20 @@ public static class RejudgeCommand
                 if (rejudgedRuns.Count == 0)
                     continue;
 
-                comparisons.Add(BuildScenarioComparison(scenarioName, rejudgedRuns));
+                comparisons.Add(BuildScenarioComparison(
+                    new EvalScenario(scenarioName, "", Rubric: storedRubric, ExpectedSkills: expectedSkills),
+                    rejudgedRuns,
+                    evalMode == EvalMode.Holistic));
             }
 
             if (comparisons.Count == 0)
                 continue;
 
             var skill = new SkillInfo(skillName, "", firstSkillSession.SkillPath, firstSkillSession.SkillPath, "");
-            var verdict = Comparator.ComputeVerdict(skill, comparisons, minImprovement, requireCompletion, confidenceLevel);
+            var holistic = comparisons.All(c => c.EvalMode == EvalMode.Holistic);
+            var verdict = holistic
+                ? HolisticComparator.ComputeVerdict(skill, comparisons, minImprovement, requireCompletion, confidenceLevel)
+                : Comparator.ComputeVerdict(skill, comparisons, minImprovement, requireCompletion, confidenceLevel);
             Console.WriteLine($"[{skillName}] {(verdict.Passed ? "✅" : "❌")} Score: {verdict.OverallImprovementScore * 100:F1}%");
             verdicts.Add(verdict);
         }
@@ -304,16 +313,18 @@ public static class RejudgeCommand
             foreach (var scenarioGroup in skillGroup.GroupBy(p => p.ScenarioName))
             {
                 var scenarioName = scenarioGroup.Key;
-                var storedRubric = GetStoredRubric(skillName, scenarioName,
-                    scenarioGroup.SelectMany(p => p.Plugin is null
+                var scenarioSessions = scenarioGroup.SelectMany(p => p.Plugin is null
                         ? new[] { p.Baseline, p.Isolated }
-                        : new[] { p.Baseline, p.Isolated, p.Plugin }));
+                        : new[] { p.Baseline, p.Isolated, p.Plugin }).ToList();
+                var storedRubric = GetStoredRubric(skillName, scenarioName, scenarioSessions);
+                var expectedSkills = GetStoredExpectedSkills(scenarioSessions);
+                var evalMode = GetStoredEvalMode(scenarioSessions);
                 var rejudgedRuns = new List<RejudgedRun>();
 
                 foreach (var pair in scenarioGroup)
                 {
                     var prompt = pair.Baseline.Prompt ?? pair.Isolated.Prompt ?? pair.Plugin?.Prompt ?? "";
-                    var scenario = new EvalScenario(scenarioName, prompt, Rubric: storedRubric);
+                    var scenario = new EvalScenario(scenarioName, prompt, Rubric: storedRubric, ExpectedSkills: expectedSkills);
                     Action<string>? log = verbose ? msg => Console.WriteLine($"  [{scenarioName}/{pair.RunIndex + 1}] {msg}") : null;
 
                     rejudgedRuns.Add(await JudgeRunGroup(
@@ -326,14 +337,20 @@ public static class RejudgeCommand
                 if (rejudgedRuns.Count == 0)
                     continue;
 
-                comparisons.Add(BuildScenarioComparison(scenarioName, rejudgedRuns));
+                comparisons.Add(BuildScenarioComparison(
+                    new EvalScenario(scenarioName, "", Rubric: storedRubric, ExpectedSkills: expectedSkills),
+                    rejudgedRuns,
+                    evalMode == EvalMode.Holistic));
             }
 
             if (comparisons.Count == 0)
                 continue;
 
             var skill = new SkillInfo(skillName, "", skillPath, skillPath, "");
-            var verdict = Comparator.ComputeVerdict(skill, comparisons, minImprovement, requireCompletion, confidenceLevel);
+            var holistic = comparisons.All(c => c.EvalMode == EvalMode.Holistic);
+            var verdict = holistic
+                ? HolisticComparator.ComputeVerdict(skill, comparisons, minImprovement, requireCompletion, confidenceLevel)
+                : Comparator.ComputeVerdict(skill, comparisons, minImprovement, requireCompletion, confidenceLevel);
             Console.WriteLine($"[{skillName}] {(verdict.Passed ? "✅" : "❌")} Score: {verdict.OverallImprovementScore * 100:F1}%");
             verdicts.Add(verdict);
         }
@@ -608,8 +625,12 @@ public static class RejudgeCommand
         }
     }
 
-    private static ScenarioComparison BuildScenarioComparison(string scenarioName, List<RejudgedRun> runs)
+    private static ScenarioComparison BuildScenarioComparison(
+        EvalScenario scenario,
+        List<RejudgedRun> runs,
+        bool holistic)
     {
+        var scenarioName = scenario.Name;
         var baselineRuns = runs.Select(r => r.Baseline).ToList();
         var isolatedRuns = runs.Select(r => r.Isolated).ToList();
         var avgBaseline = AverageResults(baselineRuns);
@@ -635,9 +656,11 @@ public static class RejudgeCommand
                 perRunPluginScores.Add(pluginComp.ImprovementScore);
             }
 
-            var perRunScores = perRunIsolatedScores
-                .Zip(perRunPluginScores, (iso, plugin) => Math.Min(iso, plugin))
-                .ToList();
+            var perRunScores = holistic
+                ? perRunPluginScores
+                : perRunIsolatedScores
+                    .Zip(perRunPluginScores, (iso, plugin) => Math.Min(iso, plugin))
+                    .ToList();
             var avgPlugin = AverageResults(pluginRuns);
             int bestPairwiseIdx = runs.FindIndex(r => r.Pairwise?.PositionSwapConsistent == true);
             if (bestPairwiseIdx < 0)
@@ -655,16 +678,23 @@ public static class RejudgeCommand
                 Baseline = avgBaseline,
                 SkilledIsolated = avgIsolated,
                 SkilledPlugin = avgPlugin,
-                ImprovementScore = Math.Min(isoComparison.ImprovementScore, pluginComparison.ImprovementScore),
+                ImprovementScore = holistic
+                    ? pluginComparison.ImprovementScore
+                    : Math.Min(isoComparison.ImprovementScore, pluginComparison.ImprovementScore),
                 IsolatedImprovementScore = isoComparison.ImprovementScore,
                 PluginImprovementScore = pluginComparison.ImprovementScore,
-                Breakdown = isoComparison.ImprovementScore <= pluginComparison.ImprovementScore
-                    ? isoComparison.Breakdown
-                    : pluginComparison.Breakdown,
+                Breakdown = holistic
+                    ? pluginComparison.Breakdown
+                    : isoComparison.ImprovementScore <= pluginComparison.ImprovementScore
+                        ? isoComparison.Breakdown
+                        : pluginComparison.Breakdown,
                 IsolatedBreakdown = isoComparison.Breakdown,
                 PluginBreakdown = pluginComparison.Breakdown,
                 PairwiseResult = bestPairwise,
                 PerRunScores = perRunScores,
+                EvalMode = holistic ? EvalMode.Holistic : EvalMode.PerSkill,
+                ExpectedSkill = scenario.ExpectedSkills is { Count: 1 } ? scenario.ExpectedSkills[0] : null,
+                ExpectedSkills = scenario.ExpectedSkills,
                 SkillActivationIsolated = new SkillActivationInfo(
                     Activated: runs.Any(r => r.IsolatedActivation.Activated),
                     DetectedSkills: runs.SelectMany(r => r.IsolatedActivation.DetectedSkills).Distinct().ToList(),
@@ -675,6 +705,11 @@ public static class RejudgeCommand
                     DetectedSkills: runs.SelectMany(r => r.PluginActivation?.DetectedSkills ?? []).Distinct().ToList(),
                     ExtraTools: runs.SelectMany(r => r.PluginActivation?.ExtraTools ?? []).Distinct().ToList(),
                     SkillEventCount: runs.Sum(r => r.PluginActivation?.SkillEventCount ?? 0)),
+                SkillActivationIsolatedPerRun = runs.Select(r => r.IsolatedActivation).ToList(),
+                SkillActivationPluginPerRun = runs
+                    .Where(r => r.PluginActivation is not null)
+                    .Select(r => r.PluginActivation!)
+                    .ToList(),
                 TimedOut = runs.Any(r => r.Baseline.Metrics.TimedOut || r.Isolated.Metrics.TimedOut || r.Plugin?.Metrics.TimedOut == true),
             };
             return comparison;
@@ -687,8 +722,36 @@ public static class RejudgeCommand
             DetectedSkills: runs.SelectMany(r => r.IsolatedActivation.DetectedSkills).Distinct().ToList(),
             ExtraTools: runs.SelectMany(r => r.IsolatedActivation.ExtraTools).Distinct().ToList(),
             SkillEventCount: runs.Sum(r => r.IsolatedActivation.SkillEventCount));
+        comparisonNoPlugin.SkillActivationIsolatedPerRun = runs.Select(r => r.IsolatedActivation).ToList();
+        comparisonNoPlugin.ExpectedSkill = scenario.ExpectedSkills is { Count: 1 } ? scenario.ExpectedSkills[0] : null;
+        comparisonNoPlugin.ExpectedSkills = scenario.ExpectedSkills;
         comparisonNoPlugin.TimedOut = runs.Any(r => r.Baseline.Metrics.TimedOut || r.Isolated.Metrics.TimedOut);
         return comparisonNoPlugin;
+    }
+
+    private static IReadOnlyList<string>? GetStoredExpectedSkills(IEnumerable<SessionRecord> sessions)
+    {
+        var json = sessions.Select(s => s.ExpectedSkillsJson)
+            .FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+        if (json is null)
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize(json, SkillValidatorJsonContext.Default.StringArray);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static EvalMode GetStoredEvalMode(IEnumerable<SessionRecord> sessions)
+    {
+        var value = sessions.Select(s => s.EvalMode)
+            .FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+        return Enum.TryParse<EvalMode>(value, ignoreCase: true, out var mode)
+            ? mode
+            : EvalMode.PerSkill;
     }
 
     private static string[]? GetStoredRubric(string skillName, string scenarioName, IEnumerable<SessionRecord> sessions)
