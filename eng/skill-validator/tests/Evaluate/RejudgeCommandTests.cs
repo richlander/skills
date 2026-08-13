@@ -4,6 +4,38 @@ namespace SkillValidator.Tests;
 
 public class RejudgeCommandTests
 {
+    [Fact]
+    public void AverageResultsPreservesTieredPerRunOutcomeForSingleRun()
+    {
+        var run = new RunResult(
+            new RunMetrics
+            {
+                AssertionResults =
+                [
+                    new(new Assertion(
+                        AssertionType.OutputContains,
+                        Value: "report",
+                        Tier: AssertionTier.Satisfies,
+                        MiniPrompt: "Print the report"), true, ""),
+                    new(new Assertion(
+                        AssertionType.FileContains,
+                        Path: "*.cs",
+                        Value: "Serializer.Serialize",
+                        Tier: AssertionTier.Delivers,
+                        MiniPrompt: "Use the serializer"), false, ""),
+                ],
+            },
+            new JudgeResult([], 0, ""));
+
+        var averaged = RejudgeCommand.AverageResults([run]);
+        var outcome = Assert.Single(averaged.Metrics.PerRun!);
+
+        Assert.Equal(1, outcome.SatisfiesAssertionsPassed);
+        Assert.Equal(1, outcome.SatisfiesAssertionsTotal);
+        Assert.Equal(0, outcome.DeliversAssertionsPassed);
+        Assert.Equal(1, outcome.DeliversAssertionsTotal);
+    }
+
     private static SessionRecord Rec(
         string id,
         string role,

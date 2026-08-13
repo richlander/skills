@@ -789,10 +789,15 @@ public static class RejudgeCommand
         }
     }
 
-    private static RunResult AverageResults(List<RunResult> runs)
+    internal static RunResult AverageResults(List<RunResult> runs)
     {
+        var perRun = runs.Select(EvaluateCommand.ToRunOutcome).ToList();
+
         if (runs.Count == 1)
+        {
+            runs[0].Metrics.PerRun = perRun;
             return runs[0];
+        }
 
         static double Avg(IEnumerable<double> nums) => nums.Average();
         static int AvgRound(IEnumerable<int> nums) => (int)Math.Round(nums.Average());
@@ -819,6 +824,7 @@ public static class RejudgeCommand
             AgentOutput = runs[^1].Metrics.AgentOutput,
             Events = runs[^1].Metrics.Events,
             WorkDir = runs[^1].Metrics.WorkDir,
+            PerRun = perRun,
         };
 
         var avgJudge = new JudgeResult(
