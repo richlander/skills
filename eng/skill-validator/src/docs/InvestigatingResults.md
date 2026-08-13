@@ -180,12 +180,17 @@ consumer can score the `Fails → Satisfies → Delivers` ladder (graded yield `
 bootstrap without the averaged summary.
 
 Each element is policy-free — raw counts and cost only; the consuming analyzer owns the ladder
-definition (e.g. *Satisfies* = at least one functional assertion and all pass):
+definition and enforces `Delivers ⇒ Satisfies`. Assertions may opt into the closed grading contract
+with a `tier` (`satisfies` or `delivers`) plus a `mini_prompt` that restates the prompt clause gated
+by the executable test. Untagged legacy assertions default to `satisfies`; when a scenario has no
+explicit `delivers` assertions, consumers retain the historical `Delivers ≡ Satisfies` proxy.
 
 | Field | Description |
 |-------|-------------|
 | `assertionsPassed` | Count of this run's **functional** assertions that passed (reject-tools excluded) |
 | `assertionsTotal` | Total **functional** assertions evaluated this run (reject-tools excluded) |
+| `satisfiesAssertionsPassed` / `satisfiesAssertionsTotal` | Per-run counts for tests tagged `tier: satisfies` |
+| `deliversAssertionsPassed` / `deliversAssertionsTotal` | Per-run counts for tests tagged `tier: delivers`; a positive total means fidelity is directly observed |
 | `taskCompleted` | Whether this run's assertions passed (per-run, not OR'd) |
 | `cost` | This run's cost |
 | `inputTokens` / `cacheReadTokens` / `outputTokens` | Token fields, sufficient to recompute this run's IET identically to the averaged arm |
@@ -202,6 +207,7 @@ Several scenario-level options in `eval.yaml` are relevant when diagnosing failu
 | `timeout` | Maximum wall-clock time per run in seconds. Default is 120 seconds if omitted. Increase when skilled runs time out. |
 | `reject_tools` | Array of tool names that will cause the run to fail if they are used (e.g., `["bash", "edit"]`). This is enforced as a post-run assertion in the validator (it does not sandbox or block the tool calls), and is useful to force the agent to explain rather than explore/build, leveling the playing field between baseline and skilled runs. |
 | `setup.files` | Array of files to create before the run. Gives the agent concrete code to work with, reducing variance from different scaffolding strategies. |
+| `assertions[].tier` + `assertions[].mini_prompt` | Optional closed-contract pair. Set both together: `satisfies` gates functional behavior; `delivers` gates the prompt-required approach/API. Legacy assertions may omit both and default to `satisfies`. |
 
 ## Common failure patterns
 

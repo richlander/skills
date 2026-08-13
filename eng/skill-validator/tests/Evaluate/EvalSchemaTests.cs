@@ -87,6 +87,71 @@ public class ParseEvalConfigTests
     }
 
     [Fact]
+    public void ParsesTieredAssertionContract()
+    {
+        var yaml = """
+            scenarios:
+              - name: "Test"
+                prompt: "Use the serializer"
+                assertions:
+                  - type: "output_contains"
+                    tier: "satisfies"
+                    mini_prompt: "Print the report"
+                    value: "report"
+                  - type: "file_contains"
+                    tier: "delivers"
+                    mini_prompt: "Use the serializer"
+                    path: "*.cs"
+                    value: "Serializer.Serialize"
+            """;
+
+        var assertions = EvalSchema.ParseEvalConfig(yaml).Scenarios[0].Assertions!;
+
+        Assert.Equal(AssertionTier.Satisfies, assertions[0].Tier);
+        Assert.Equal("Print the report", assertions[0].MiniPrompt);
+        Assert.Equal(AssertionTier.Delivers, assertions[1].Tier);
+        Assert.Equal("Use the serializer", assertions[1].MiniPrompt);
+    }
+
+    [Fact]
+    public void RejectsPartialAssertionContract()
+    {
+        var yaml = """
+            scenarios:
+              - name: "Test"
+                prompt: "Use the serializer"
+                assertions:
+                  - type: "output_contains"
+                    tier: "delivers"
+                    value: "report"
+            """;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => EvalSchema.ParseEvalConfig(yaml));
+
+        Assert.Contains("both 'tier' and 'mini_prompt'", ex.Message);
+    }
+
+    [Fact]
+    public void RejectsDeliversOnlyContract()
+    {
+        var yaml = """
+            scenarios:
+              - name: "Test"
+                prompt: "Use the serializer"
+                assertions:
+                  - type: "file_contains"
+                    tier: "delivers"
+                    mini_prompt: "Use the serializer"
+                    path: "*.cs"
+                    value: "Serializer.Serialize"
+            """;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => EvalSchema.ParseEvalConfig(yaml));
+
+        Assert.Contains("must also have at least one satisfies-tier assertion", ex.Message);
+    }
+
+    [Fact]
     public void ParsesScenarioLevelConstraints()
     {
         var yaml = """

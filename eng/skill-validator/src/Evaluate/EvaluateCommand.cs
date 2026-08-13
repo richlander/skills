@@ -2031,30 +2031,38 @@ public static class EvaluateCommand
         metrics.JudgeCacheWriteTokens += tokens.CacheWriteTokens;
     }
 
+    internal static RunOutcome ToRunOutcome(RunResult run)
+    {
+        // Functional assertions only — exclude reject-tools (the web/archaeology discipline guard).
+        // Tier-specific counts preserve the two deterministic gates without baking ladder policy
+        // into the harness; the analyzer enforces Delivers => Satisfies.
+        var functional = run.Metrics.AssertionResults
+            .Where(a => a.Assertion.Type != AssertionType.RejectTools)
+            .ToList();
+        var satisfies = functional.Where(a => a.Assertion.Tier == AssertionTier.Satisfies).ToList();
+        var delivers = functional.Where(a => a.Assertion.Tier == AssertionTier.Delivers).ToList();
+
+        return new RunOutcome(
+            AssertionsPassed: functional.Count(a => a.Passed),
+            AssertionsTotal: functional.Count,
+            TaskCompleted: run.Metrics.TaskCompleted,
+            Cost: run.Metrics.Cost,
+            InputTokens: run.Metrics.InputTokens,
+            CacheReadTokens: run.Metrics.CacheReadTokens,
+            OutputTokens: run.Metrics.OutputTokens,
+            ToolCallCount: run.Metrics.ToolCallCount,
+            TurnCount: run.Metrics.TurnCount,
+            WallTimeMs: run.Metrics.WallTimeMs,
+            SatisfiesAssertionsPassed: satisfies.Count(a => a.Passed),
+            SatisfiesAssertionsTotal: satisfies.Count,
+            DeliversAssertionsPassed: delivers.Count(a => a.Passed),
+            DeliversAssertionsTotal: delivers.Count);
+    }
+
     private static RunResult AverageResults(List<RunResult> runs)
     {
-        static RunOutcome ToOutcome(RunResult r)
-        {
-            // Functional assertions only — exclude reject-tools (the web/archaeology discipline
-            // guard, AssertionType.RejectTools), matching the analyzer's Satisfies definition so a
-            // run that only trips a reject-tools assertion still counts as functionally satisfying.
-            var func = r.Metrics.AssertionResults
-                .Where(a => a.Assertion.Type != AssertionType.RejectTools)
-                .ToList();
-            return new(
-                AssertionsPassed: func.Count(a => a.Passed),
-                AssertionsTotal: func.Count,
-                TaskCompleted: r.Metrics.TaskCompleted,
-                Cost: r.Metrics.Cost,
-                InputTokens: r.Metrics.InputTokens,
-                CacheReadTokens: r.Metrics.CacheReadTokens,
-                OutputTokens: r.Metrics.OutputTokens,
-                ToolCallCount: r.Metrics.ToolCallCount,
-                TurnCount: r.Metrics.TurnCount,
-                WallTimeMs: r.Metrics.WallTimeMs);
-        }
 
-        var perRun = runs.Select(ToOutcome).ToList();
+        var perRun = runs.Select(ToRunOutcome).ToList();
 
         if (runs.Count == 1)
         {

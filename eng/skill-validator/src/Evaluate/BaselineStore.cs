@@ -309,7 +309,8 @@ internal sealed class BaselineStore
             foreach (var a in assertions)
             {
                 sb.Append("A:").Append(a.Type).Append('|').Append(a.Path ?? "").Append('|')
-                  .Append(a.Value ?? "").Append('|').Append(a.Pattern ?? "").Append('|');
+                  .Append(a.Value ?? "").Append('|').Append(a.Pattern ?? "").Append('|')
+                  .Append(a.Tier).Append('|').Append(a.MiniPrompt ?? "").Append('|');
                 if (a.CommandArgs is { } ca)
                     sb.Append(ca.CommandToRun).Append(';').Append(ca.CommandArguments ?? "").Append(';')
                       .Append(ca.ExpectedExitCode?.ToString() ?? "").Append(';').Append(ca.ExpectedStdOutContains ?? "").Append(';')

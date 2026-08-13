@@ -251,6 +251,17 @@ public class BaselineStoreTests
         var baseScenario = Scenario("s", prompt);
         var withRubric = baseScenario with { Rubric = ["Did it find the root cause?"] };
         var withAssertion = baseScenario with { Assertions = [new Assertion(AssertionType.OutputContains, Value: "error")] };
+        var withDeliversAssertion = baseScenario with
+        {
+            Assertions =
+            [
+                new Assertion(
+                    AssertionType.OutputContains,
+                    Value: "error",
+                    Tier: AssertionTier.Delivers,
+                    MiniPrompt: "Use the requested API"),
+            ],
+        };
         var withTurns = baseScenario with { MaxTurns = 5 };
         var withExpectTools = baseScenario with { ExpectTools = ["bash"] };
 
@@ -259,6 +270,9 @@ public class BaselineStoreTests
         // Each criterion that shapes the cached result must change the identity.
         Assert.NotEqual(shaBase, BaselineStore.ComputeTargetSha(withRubric, null));
         Assert.NotEqual(shaBase, BaselineStore.ComputeTargetSha(withAssertion, null));
+        Assert.NotEqual(
+            BaselineStore.ComputeTargetSha(withAssertion, null),
+            BaselineStore.ComputeTargetSha(withDeliversAssertion, null));
         Assert.NotEqual(shaBase, BaselineStore.ComputeTargetSha(withTurns, null));
         Assert.NotEqual(shaBase, BaselineStore.ComputeTargetSha(withExpectTools, null));
 

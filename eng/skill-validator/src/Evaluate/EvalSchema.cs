@@ -139,6 +139,12 @@ public static class EvalSchema
             throw new InvalidOperationException("Scenario prompt is required");
 
         var assertions = raw.Assertions?.Select(ParseAssertion).ToList();
+        if (assertions?.Any(a => a.Tier == AssertionTier.Delivers) == true &&
+            !assertions.Any(a => a.Tier == AssertionTier.Satisfies))
+        {
+            throw new InvalidOperationException(
+                $"Scenario '{raw.Name}' with delivers-tier assertions must also have at least one satisfies-tier assertion");
+        }
         var expectedSkills = ParseExpectedSkills(raw);
 
         SetupConfig? setup = null;
@@ -194,6 +200,24 @@ public static class EvalSchema
 
     private static Assertion ParseAssertion(RawAssertion raw)
     {
+        if ((raw.Tier is null) != (raw.MiniPrompt is null))
+        {
+            throw new InvalidOperationException(
+                $"Assertion '{raw.Type}' must set both 'tier' and 'mini_prompt', or neither for legacy compatibility");
+        }
+
+        var tier = raw.Tier?.Trim().ToLowerInvariant() switch
+        {
+            null => AssertionTier.Satisfies,
+            "satisfies" => AssertionTier.Satisfies,
+            "delivers" => AssertionTier.Delivers,
+            _ => throw new InvalidOperationException(
+                $"Assertion '{raw.Type}' has unknown tier '{raw.Tier}'; expected 'satisfies' or 'delivers'"),
+        };
+
+        if (raw.MiniPrompt is not null && string.IsNullOrWhiteSpace(raw.MiniPrompt))
+            throw new InvalidOperationException($"Assertion '{raw.Type}' requires a non-empty 'mini_prompt'");
+
         var type = raw.Type switch
         {
             "file_exists" => AssertionType.FileExists,
@@ -255,7 +279,14 @@ public static class EvalSchema
                 raw.CommandTimeout)
             : null;
 
-        return new Assertion(type, raw.Path, raw.Value, raw.Pattern, commandArgs);
+        return new Assertion(
+            type,
+            raw.Path,
+            raw.Value,
+            raw.Pattern,
+            commandArgs,
+            tier,
+            NullIfWhiteSpace(raw.MiniPrompt));
     }
 
     private static string? NullIfWhiteSpace(string? value) =>
@@ -311,6 +342,8 @@ public static class EvalSchema
     internal sealed class RawAssertion
     {
         public string Type { get; set; } = "";
+        public string? Tier { get; set; }
+        public string? MiniPrompt { get; set; }
         public string? Path { get; set; }
         public string? Value { get; set; }
         public string? Pattern { get; set; }

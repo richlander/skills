@@ -48,6 +48,16 @@ public enum AssertionType
     MaxTokens,
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<AssertionTier>))]
+public enum AssertionTier
+{
+    [JsonStringEnumMemberName("satisfies")]
+    Satisfies,
+
+    [JsonStringEnumMemberName("delivers")]
+    Delivers,
+}
+
 public sealed record CommandAssertionArgs(
     string CommandToRun,
     string? CommandArguments = null,
@@ -63,7 +73,9 @@ public sealed record Assertion(
     string? Path = null,
     string? Value = null,
     string? Pattern = null,
-    CommandAssertionArgs? CommandArgs = null);
+    CommandAssertionArgs? CommandArgs = null,
+    AssertionTier Tier = AssertionTier.Satisfies,
+    string? MiniPrompt = null);
 
 public sealed record AssertionResult(
     Assertion Assertion,
@@ -240,10 +252,10 @@ public sealed record RunResult(
 /// <summary>
 /// A single run's raw outcome, captured per arm before averaging so the downstream analyzer can
 /// score the graded-yield ladder (Fails → Satisfies → Delivers) and run the cost bootstrap. Kept
-/// policy-free: the analyzer defines Satisfies (all functional assertions pass) and Delivers from
-/// these primitives. <see cref="AssertionsPassed"/>/<see cref="AssertionsTotal"/> count FUNCTIONAL
-/// assertions only (reject-tools excluded), matching the analyzer's Satisfies definition. IET is
-/// recomputed from the token fields exactly as for the averaged arm.
+/// policy-free: the analyzer combines the tier-specific counts into the ladder gates.
+/// <see cref="AssertionsPassed"/>/<see cref="AssertionsTotal"/> retain the aggregate FUNCTIONAL
+/// counts for compatibility; reject-tools assertions are excluded throughout. IET is recomputed
+/// from the token fields exactly as for the averaged arm.
 /// </summary>
 public sealed record RunOutcome(
     int AssertionsPassed,
@@ -255,7 +267,11 @@ public sealed record RunOutcome(
     int OutputTokens,
     int ToolCallCount,
     int TurnCount,
-    long WallTimeMs);
+    long WallTimeMs,
+    int? SatisfiesAssertionsPassed = null,
+    int? SatisfiesAssertionsTotal = null,
+    int? DeliversAssertionsPassed = null,
+    int? DeliversAssertionsTotal = null);
 
 // --- Pairwise judging ---
 
